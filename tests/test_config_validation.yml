@@ -1,0 +1,27 @@
+import pytest
+
+from peph.config.schema import load_run_config
+
+
+def test_config_rejects_bad_breaks(tmp_path) -> None:
+    cfg = tmp_path / "run.yml"
+    cfg.write_text(
+        """
+run_name: x
+data: {path: x.csv, format: csv}
+schema:
+  id_col: id
+  time_col: time
+  event_col: event
+  x_numeric: []
+  x_categorical: []
+  categorical_reference_levels: {}
+time:
+  scale: days
+  breaks: [0, 30, 30]
+split: {strategy: subject_random, test_size: 0.2, seed: 1}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        load_run_config(cfg)

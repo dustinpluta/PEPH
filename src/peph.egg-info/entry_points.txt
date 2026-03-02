@@ -1,0 +1,2 @@
+[console_scripts]
+peph = peph.cli.main:main
