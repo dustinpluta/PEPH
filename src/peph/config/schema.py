@@ -73,6 +73,9 @@ class FitConfig(BaseModel):
     max_iter: int = 200
     tol: float = 1e-8
 
+    # NEW
+    covariance: Literal["classical", "cluster_id"] = "classical"
+
 
 class PredictConfig(BaseModel):
     horizons_days: List[float] = Field(default_factory=list)

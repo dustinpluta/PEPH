@@ -22,6 +22,7 @@ class FittedPEPHModel:
     # time
     breaks: List[float]
     interval_convention: str  # "[a,b)"
+
     # covariates
     encoding: FeatureEncoding
 
@@ -43,15 +44,19 @@ class FittedPEPHModel:
     aic: Optional[float] = None
     deviance: Optional[float] = None
 
+    # NEW
+    llf: Optional[float] = None
+
     def to_json_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        return d
+        return asdict(self)
 
     @classmethod
     def from_json_dict(cls, d: Dict[str, Any]) -> "FittedPEPHModel":
         enc = FeatureEncoding(**d["encoding"])
         d2 = dict(d)
         d2["encoding"] = enc
+        # Backward compatibility: if llf absent in older JSON
+        d2.setdefault("llf", None)
         return cls(**d2)
 
     def save(self, path: str) -> None:
@@ -61,7 +66,6 @@ class FittedPEPHModel:
     def load(cls, path: str) -> "FittedPEPHModel":
         return cls.from_json_dict(read_json(path))
 
-    # convenient numpy views
     def params_array(self) -> np.ndarray:
         return np.asarray(self.params, dtype=float)
 

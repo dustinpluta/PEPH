@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from peph.model.inference import baseline_table, coef_table, inference_summary
 from peph.config.schema import RunConfig
 from peph.data.io import read_table, write_table
 from peph.data.long import expand_long
@@ -91,8 +92,24 @@ def run_pipeline(cfg: RunConfig) -> Path:
         max_iter=cfg.fit.max_iter,
         tol=cfg.fit.tol,
         n_train_subjects=int(train_wide[cfg.schema.id_col].nunique()),
+        covariance=cfg.fit.covariance,
+        cluster_col="id",  # long-form id column is always "id" from expand_long
     )
     fitted.save(str(out_dir / "model.json"))
+
+    # Inference artifacts
+    coef_df = coef_table(fitted)
+    base_df = baseline_table(fitted)
+
+    write_table(coef_df, out_dir / "coef_table.parquet")
+    write_table(base_df, out_dir / "baseline_table.parquet")
+
+    inf = inference_summary(
+        fitted,
+        train_wide_time=train_wide[cfg.schema.time_col].to_numpy(dtype=float),
+        train_wide_event=train_wide[cfg.schema.event_col].to_numpy(dtype=int),
+    )
+    write_json(out_dir / "inference.json", inf)
 
     # Predict on test
     horizons = list(map(float, cfg.predict.horizons_days or []))
@@ -184,4 +201,4 @@ def run_pipeline(cfg: RunConfig) -> Path:
                 out_path=plots_dir / f"calibration_risk_t{int(tau)}.png",
             )
 
-    return out_dir
+    return out_dir  

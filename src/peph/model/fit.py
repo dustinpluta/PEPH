@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Literal
 
 import numpy as np
 import statsmodels.api as sm
@@ -21,9 +21,15 @@ def fit_peph(
     tol: float = 1e-8,
     eps_offset: float = 1e-12,
     n_train_subjects: int,
+    covariance: Literal["classical", "cluster_id"] = "classical",
+    cluster_col: str = "id",
 ) -> FittedPEPHModel:
     """
     Fit piecewise exponential proportional hazards via Poisson GLM with offset.
+
+    covariance:
+      - "classical": model-based covariance (default)
+      - "cluster_id": sandwich covariance clustered by subject id on long-form rows
     """
     K = len(breaks) - 1
     y, X, offset, info = build_design_long_train(
@@ -36,12 +42,25 @@ def fit_peph(
     )
 
     model = sm.GLM(y, X, family=sm.families.Poisson(), offset=offset)
-    res = model.fit(maxiter=max_iter, tol=tol)
+
+    if covariance == "classical":
+        res = model.fit(maxiter=max_iter, tol=tol)
+    elif covariance == "cluster_id":
+        if cluster_col not in long_train.columns:
+            raise ValueError(f"cluster_col='{cluster_col}' not found in long_train")
+        groups = long_train[cluster_col].to_numpy()
+        res = model.fit(
+            maxiter=max_iter,
+            tol=tol,
+            cov_type="cluster",
+            cov_kwds={"groups": groups},
+        )
+    else:
+        raise ValueError(f"Unknown covariance option: {covariance}")
 
     params = np.asarray(res.params, dtype=float)
     cov = np.asarray(res.cov_params(), dtype=float)
 
-    # baseline interval log hazards are first K params
     alpha = params[:K]
     nu = np.exp(alpha)
 
@@ -53,6 +72,8 @@ def fit_peph(
         x_expanded_cols=info.x_col_names,
     )
 
+    llf = float(getattr(res, "llf", np.nan))
+
     fitted = FittedPEPHModel(
         breaks=list(map(float, breaks)),
         interval_convention="[a,b)",
@@ -63,11 +84,12 @@ def fit_peph(
         params=params.tolist(),
         cov=cov.tolist(),
         nu=nu.tolist(),
-        fit_backend=fit_backend,
+        fit_backend=fit_backend + f"::{covariance}",
         n_train_subjects=int(n_train_subjects),
         n_train_long_rows=int(len(long_train)),
         converged=getattr(res, "converged", None),
         aic=float(getattr(res, "aic", np.nan)) if getattr(res, "aic", None) is not None else None,
         deviance=float(getattr(res, "deviance", np.nan)) if getattr(res, "deviance", None) is not None else None,
+        llf=None if np.isnan(llf) else llf,
     )
     return fitted
