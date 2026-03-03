@@ -1,7 +1,7 @@
 run_name: seer_crc_peph_v1
 
 data:
-  path: simulated_seer_crc.csv
+  path: data/simulated_seer_crc.csv
   format: csv
 
 schema:

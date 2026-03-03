@@ -1,18 +1,9 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
-from pathlib import Path
-
-import yaml
 
 from peph.config.schema import load_run_config
-
-
-def _write_yaml(path: Path, obj) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(obj, f, sort_keys=False)
+from peph.pipeline.run import run_pipeline
 
 
 def main() -> None:
@@ -32,14 +23,9 @@ def main() -> None:
 
     if args.cmd == "run":
         cfg = load_run_config(args.config, overrides=args.override)
+        out_dir = run_pipeline(cfg)
+        print(f"[peph] Run complete. Artifacts at: {out_dir}")
 
-        ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        out_dir = Path(cfg.output.root_dir) / f"{cfg.run_name}_{ts}"
-        out_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save resolved config (as dict)
-        _write_yaml(out_dir / "config_resolved.yml", cfg.model_dump())
-
-        # Pipeline will be wired in next PR
-        print(f"[peph] Wrote resolved config to: {out_dir / 'config_resolved.yml'}")
-        print("[peph] Pipeline execution not yet implemented (PR1 will add split/long/fit/metrics).")
+if __name__ == "__main__":
+    main()
