@@ -35,9 +35,22 @@ split:
   seed: 123
 
 fit:
-  backend: statsmodels_glm_poisson
-  max_iter: 200
-  tol: 1.0e-8
+  backend: map_leroux
+  leroux_max_iter: 200
+  leroux_ftol: 1e-7
+  rho_clip: 1e-6
+  q_jitter: 1e-8
+  prior_logtau_sd: 10.0
+  prior_rho_a: 1.0
+  prior_rho_b: 1.0
+
+spatial:
+  area_col: zip
+  zips_path: graph/zips.csv
+  edges_path: graph/edges.csv
+  edges_u_col: zip_u
+  edges_v_col: zip_v
+  allow_unseen_area: false
 
 predict:
   horizons_days: [365, 730, 1825]   # 1y, 2y, 5y
