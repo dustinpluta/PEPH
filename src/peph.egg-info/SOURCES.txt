@@ -22,8 +22,12 @@ src/peph/pipeline/__init__.py
 src/peph/pipeline/run.py
 src/peph/plots/calibration.py
 src/peph/plots/diagnostics.py
+src/peph/sim/__init__.py
+src/peph/sim/ph.py
 src/peph/utils/json.py
 tests/test_json_roudtrip.py
 tests/test_long_expand.py
+tests/test_parameter_recovery_slow.py
 tests/test_predict_hard_fail.py
+tests/test_sim_schema_fast.py
 tests/test_split.py
