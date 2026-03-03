@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from peph.model.fit_dispatch import fit_model_dispatch
 from peph.model.inference import baseline_table, coef_table, inference_summary
 from peph.config.schema import RunConfig
 from peph.data.io import read_table, write_table
@@ -83,17 +84,29 @@ def run_pipeline(cfg: RunConfig) -> Path:
     write_table(long_test, out_dir / "long_test.parquet")
 
     # Fit
-    fitted = fit_peph(
-        long_train,
+    fitted = fit_model_dispatch(
+        backend=cfg.fit.backend,
+        long_train=long_train,
+        train_wide=train_wide,
         breaks=cfg.time.breaks,
         x_numeric=cfg.schema.x_numeric,
         x_categorical=cfg.schema.x_categorical,
         categorical_reference_levels=cfg.schema.categorical_reference_levels,
-        max_iter=cfg.fit.max_iter,
-        tol=cfg.fit.tol,
         n_train_subjects=int(train_wide[cfg.schema.id_col].nunique()),
         covariance=cfg.fit.covariance,
-        cluster_col="id",  # long-form id column is always "id" from expand_long
+        spatial_area_col=(cfg.spatial.area_col if cfg.spatial else None),
+        spatial_zips_path=(cfg.spatial.zips_path if cfg.spatial else None),
+        spatial_edges_path=(cfg.spatial.edges_path if cfg.spatial else None),
+        spatial_edges_u_col=(cfg.spatial.edges_u_col if cfg.spatial else "zip_u"),
+        spatial_edges_v_col=(cfg.spatial.edges_v_col if cfg.spatial else "zip_v"),
+        allow_unseen_area=(cfg.spatial.allow_unseen_area if cfg.spatial else False),
+        leroux_max_iter=cfg.fit.leroux_max_iter,
+        leroux_ftol=cfg.fit.leroux_ftol,
+        rho_clip=cfg.fit.rho_clip,
+        q_jitter=cfg.fit.q_jitter,
+        prior_logtau_sd=cfg.fit.prior_logtau_sd,
+        prior_rho_a=cfg.fit.prior_rho_a,
+        prior_rho_b=cfg.fit.prior_rho_b,
     )
     fitted.save(str(out_dir / "model.json"))
 

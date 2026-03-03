@@ -1,164 +1,100 @@
+# src/peph/config/schema.py
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
-import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
-
-
-class DataConfig(BaseModel):
-    path: str
-    format: Literal["csv", "parquet"] = "csv"
+from pydantic import BaseModel
 
 
 class SchemaConfig(BaseModel):
+    """
+    Defines the canonical column names and covariate lists for a dataset.
+    """
     id_col: str
     time_col: str
     event_col: str
 
-    x_numeric: List[str] = Field(default_factory=list)
-    x_categorical: List[str] = Field(default_factory=list)
-    categorical_reference_levels: Dict[str, str] = Field(default_factory=dict)
+    # Explicit X-matrix columns
+    x_numeric: List[str]
+    x_categorical: List[str]
 
-    @model_validator(mode="after")
-    def _validate_no_overlap(self) -> "SchemaConfig":
-        overlap = set(self.x_numeric).intersection(self.x_categorical)
-        if overlap:
-            raise ValueError(f"x_numeric and x_categorical overlap: {sorted(overlap)}")
-        for c in self.x_categorical:
-            if c not in self.categorical_reference_levels:
-                raise ValueError(
-                    f"Missing categorical reference level for '{c}'. "
-                    f"Provide schema.categorical_reference_levels.{c}"
-                )
-        return self
+    # Reference levels for each categorical column (must be provided for all categoricals)
+    categorical_reference_levels: Dict[str, str]
 
 
 class TimeConfig(BaseModel):
-    scale: Literal["days"] = "days"
+    """
+    Time scale is days. Breaks define a left-closed, right-open convention [a,b).
+    """
     breaks: List[float]
-    interval_closed: Literal["left"] = "left"
-    interval_open: Literal["right"] = "right"
-
-    @field_validator("breaks")
-    @classmethod
-    def _validate_breaks(cls, v: List[float]) -> List[float]:
-        if len(v) < 2:
-            raise ValueError("breaks must have at least two entries")
-        if v[0] != 0:
-            raise ValueError("breaks[0] must be 0 for this package")
-        # strictly increasing
-        for i in range(len(v) - 1):
-            if not (v[i + 1] > v[i]):
-                raise ValueError("breaks must be strictly increasing")
-        return v
 
 
-class SplitConfig(BaseModel):
-    strategy: Literal["subject_random"] = "subject_random"
-    test_size: float = 0.25
-    seed: int = 123
+class SpatialConfig(BaseModel):
+    """
+    Spatial frailty configuration (ZIP-level in your case).
+    Graph is provided as a ZIP universe + undirected edge list.
+    """
+    # Column in wide (and propagated into long) holding area label (e.g., zip code)
+    area_col: str = "zip"
 
-    @field_validator("test_size")
-    @classmethod
-    def _validate_test_size(cls, v: float) -> float:
-        if not (0.0 < v < 1.0):
-            raise ValueError("test_size must be in (0,1)")
-        return v
+    # Graph assets
+    zips_path: str
+    edges_path: str
+
+    # Edge list column names
+    edges_u_col: str = "zip_u"
+    edges_v_col: str = "zip_v"
+
+    # If False, unseen ZIPs (not in graph universe) hard-fail at fit/predict time
+    allow_unseen_area: bool = False
 
 
 class FitConfig(BaseModel):
-    backend: Literal["statsmodels_glm_poisson"] = "statsmodels_glm_poisson"
+    """
+    Fitting configuration.
+
+    backend:
+      - statsmodels_glm_poisson: standard PE-PH via Poisson trick (current default)
+      - map_leroux: PH init then MAP refinement with Leroux CAR frailty
+    """
+    backend: Literal["statsmodels_glm_poisson", "map_leroux"] = "statsmodels_glm_poisson"
+
+    # statsmodels fit controls (used for PH init and for pure PH backend)
     max_iter: int = 200
     tol: float = 1e-8
 
-    # NEW
+    # covariance for PH backend (and PH init stage): classical or cluster-robust by subject id
     covariance: Literal["classical", "cluster_id"] = "classical"
 
+    # ---- Leroux MAP controls (used only when backend == "map_leroux") ----
+    leroux_max_iter: int = 200
+    leroux_ftol: float = 1e-7
 
-class PredictConfig(BaseModel):
-    horizons_days: List[float] = Field(default_factory=list)
-    grid: Dict[str, Any] = Field(default_factory=dict)
+    # Keep rho away from 0/1 for numerical stability
+    rho_clip: float = 1e-6
 
+    # Jitter added to Q(rho) diagonal to stabilize sparse factorization
+    q_jitter: float = 1e-8
 
-class MetricsConfig(BaseModel):
-    compute_on: Literal["test", "train"] = "test"
-    discrimination: Dict[str, bool] = Field(default_factory=dict)
-    calibration: Dict[str, bool] = Field(default_factory=dict)
-    residuals: Dict[str, bool] = Field(default_factory=dict)
+    # Weak stabilizing hyperpriors (MAP)
+    # log(tau) ~ Normal(0, prior_logtau_sd^2)
+    prior_logtau_sd: float = 10.0
 
-
-class PlotsConfig(BaseModel):
-    calibration_risk: bool = True
-    cox_snell: bool = True
-
-
-class OutputConfig(BaseModel):
-    root_dir: str = "models"
+    # rho ~ Beta(prior_rho_a, prior_rho_b)
+    prior_rho_a: float = 1.0
+    prior_rho_b: float = 1.0
 
 
 class RunConfig(BaseModel):
-    run_name: str = "peph_run"
-    data: DataConfig
+    """
+    Top-level run configuration.
+    """
+    input_csv: str
+    out_dir: str
+
     schema: SchemaConfig
     time: TimeConfig
-    split: SplitConfig
-    fit: FitConfig = FitConfig()
-    predict: PredictConfig = PredictConfig()
-    metrics: MetricsConfig = MetricsConfig()
-    plots: PlotsConfig = PlotsConfig()
-    output: OutputConfig = OutputConfig()
+    fit: FitConfig
 
-    @model_validator(mode="after")
-    def _validate_horizons(self) -> "RunConfig":
-        if self.predict.horizons_days:
-            max_b = self.time.breaks[-1]
-            bad = [t for t in self.predict.horizons_days if t <= 0 or t > max_b]
-            if bad:
-                raise ValueError(
-                    f"predict.horizons_days must be in (0, {max_b}] but got {bad}"
-                )
-        return self
-
-
-def load_yaml(path: str | Path) -> Dict[str, Any]:
-    p = Path(path)
-    with p.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    if not isinstance(data, dict):
-        raise ValueError("YAML config must be a mapping at top-level")
-    return data
-
-
-def _deep_set(d: Dict[str, Any], dotted_key: str, value: Any) -> None:
-    keys = dotted_key.split(".")
-    cur = d
-    for k in keys[:-1]:
-        if k not in cur or not isinstance(cur[k], dict):
-            cur[k] = {}
-        cur = cur[k]
-    cur[keys[-1]] = value
-
-
-def apply_overrides(cfg_dict: Dict[str, Any], overrides: List[str]) -> Dict[str, Any]:
-    """
-    overrides: list of strings like ["split.seed=999", "fit.max_iter=300"]
-    Values are YAML-parsed, so "true"/"3.2"/"[1,2]" work.
-    """
-    out = dict(cfg_dict)
-    for item in overrides:
-        if "=" not in item:
-            raise ValueError(f"Invalid override '{item}'. Expected key=value")
-        k, v_str = item.split("=", 1)
-        # parse scalar/list/dict using YAML parser
-        v = yaml.safe_load(v_str)
-        _deep_set(out, k, v)
-    return out
-
-
-def load_run_config(path: str | Path, overrides: Optional[List[str]] = None) -> RunConfig:
-    d = load_yaml(path)
-    if overrides:
-        d = apply_overrides(d, overrides)
-    return RunConfig.model_validate(d)
+    # Only required when fit.backend == "map_leroux"
+    spatial: Optional[SpatialConfig] = None
