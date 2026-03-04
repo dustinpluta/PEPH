@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 class SchemaConfig(BaseModel):
     """
-    Canonical column names + covariate lists.
+    Canonical column names + explicit X matrix columns.
     """
     id_col: str
     time_col: str
@@ -45,19 +45,14 @@ class SpatialConfig(BaseModel):
 
 
 class FitConfig(BaseModel):
-    """
-    Fit configuration.
-    """
     backend: Literal["statsmodels_glm_poisson", "map_leroux"] = "statsmodels_glm_poisson"
 
-    # statsmodels fit controls (PH init and/or PH-only)
     max_iter: int = 200
     tol: float = 1e-8
 
-    # covariance for PH fit stage
     covariance: Literal["classical", "cluster_id"] = "classical"
 
-    # Leroux MAP controls (only used for backend == map_leroux)
+    # Leroux MAP controls (only used if backend == map_leroux)
     leroux_max_iter: int = 200
     leroux_ftol: float = 1e-7
     rho_clip: float = 1e-6
@@ -69,9 +64,6 @@ class FitConfig(BaseModel):
 
 
 class PredictConfig(BaseModel):
-    """
-    Prediction settings. Keep minimal; your pipeline can interpret these.
-    """
     horizons_days: List[float] = [365.0, 730.0, 1825.0]
     frailty_mode: Literal["auto", "none", "conditional", "marginal"] = "auto"
 
@@ -108,19 +100,18 @@ class DataConfig(BaseModel):
 class RunConfig(BaseModel):
     """
     Top-level run config used by the pipeline.
-    NOTE: field name 'schema' triggers a pydantic warning (shadows BaseModel.schema).
-    If you want to eliminate that warning later, rename to 'data_schema' and update YAML + code.
     """
     run_name: str = "run"
 
     data: DataConfig
     output: OutputConfig = OutputConfig()
 
-    schema: SchemaConfig
+    # RENAMED: schema -> data_schema to avoid pydantic BaseModel.schema shadowing warning
+    data_schema: SchemaConfig
+
     time: TimeConfig
     fit: FitConfig
 
-    # Only required when fit.backend == "map_leroux"
     spatial: Optional[SpatialConfig] = None
 
     split: SplitConfig = SplitConfig()
@@ -132,7 +123,6 @@ class RunConfig(BaseModel):
 def _apply_overrides(cfg: Dict[str, Any], overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Shallow merge overrides into cfg.
-    If you want dotted-key overrides later (e.g. fit.backend=map_leroux), implement here.
     """
     if not overrides:
         return cfg
@@ -143,9 +133,6 @@ def _apply_overrides(cfg: Dict[str, Any], overrides: Optional[Dict[str, Any]]) -
 
 
 def load_run_config(path: str | Path, overrides: Optional[Dict[str, Any]] = None) -> RunConfig:
-    """
-    Load YAML and parse into RunConfig.
-    """
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Config not found: {p}")
