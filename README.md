@@ -175,3 +175,55 @@ Example workflow:
 
 ```bash
 python -m peph.cli.main run --config configs/run.yml
+```
+
+Configuration files control:
+  - dataset paths
+  - covariates
+  - time intervals
+  - spatial graph inputs
+  - prediction horizons
+  - model settings
+
+Outputs are written to a timestamped directory under ```models/```
+
+Artifacts include:
+  - fitted model JSON
+  - coefficient tables
+  - prediction outputs
+  - evaluation metrics
+  - diagnostic plots
+
+## Testing and Validation
+
+The package inlcudes a comprehensive `pytest` test suite covering:
+  - long-format expansion correctness
+  - parameter recovery under simulation
+  - robust covariance estimation
+  - spatial frailty optimization
+  - model artifact serialization
+  - pipeline execution tests
+
+Simulation-based tests validate recovery of both regression parameters and spatial frailty structure.
+
+## Intended Use
+
+PEPH is designed for large observational survival analyses, particularly in epidemiology and health services research.
+
+Typical applicatinos include:
+  - cancer survival modeling
+  - geographic health disparities
+  - health policy evaluation
+  - population-based risk prediction
+
+The architecture is modular and designed to support future extensions: 
+  - non-proportional hazards model
+  - spline-smoothed baseline hazards
+  - additional spatial priors (e.g., BYM2)
+  - Bayesian inference methods
+
+
+
+
+```bash
+python -m peph.cli.main run --config configs/run.yml
