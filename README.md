@@ -1,229 +1,309 @@
 # PEPH: Piecewise Exponential Proportional Hazards Models in Python
 
-PEPH is a production-oriented Python package for fitting and evaluating **piecewise exponential proportional hazards (PE-PH) survival models**. The package supports both standard proportional hazards models and **spatial frailty extensions** using conditional autoregressive (CAR) priors.
+PEPH is a production-oriented Python package for fitting and evaluating
+**piecewise exponential proportional hazards (PE-PH) survival models**.
+The package supports both standard proportional hazards models and
+**spatial frailty extensions** using conditional autoregressive (CAR)
+priors.
 
-The implementation is designed for large-scale epidemiologic datasets, with particular focus on **SEER–Medicare cancer survival data**, where cohort sizes can reach hundreds of thousands of subjects and spatial structure (e.g., ZIP-code–level effects) may be present.
+The implementation is designed for large-scale epidemiologic datasets,
+with particular focus on **SEER--Medicare cancer survival data**, where
+cohort sizes can reach hundreds of thousands of subjects and spatial
+structure (e.g., ZIP-code--level effects) may be present.
 
 The package provides an end-to-end modeling pipeline including:
 
-- data preparation
-- piecewise exponential model fitting
-- spatial frailty modeling
-- survival and risk prediction
-- model diagnostics
-- calibration and discrimination metrics
-- reproducible configuration-driven workflows
+-   data preparation
+-   piecewise exponential model fitting
+-   spatial frailty modeling
+-   survival and risk prediction
+-   model diagnostics
+-   calibration and discrimination metrics
+-   reproducible configuration-driven workflows
 
-All modeling steps are controlled via YAML configuration files, enabling reproducible analyses and easy integration into larger data pipelines.
+All modeling steps are controlled via YAML configuration files, enabling
+reproducible analyses and easy integration into larger data pipelines.
 
----
+------------------------------------------------------------------------
 
 # Statistical Model
 
 PEPH implements the **piecewise exponential proportional hazards model**
 
-$
-h(t \mid x) = h_0(t)\exp(x^\top \beta)
-$
+h(t \| x) = h0(t) \* exp(xᵀβ)
 
-where the baseline hazard is assumed constant within user-defined time intervals:
+where the baseline hazard is assumed constant within user-defined time
+intervals.
 
-\[
-h_0(t) = \nu_k \quad \text{for } t \in [\tau_k, \tau_{k+1})
-\]
+This formulation enables efficient estimation using the **Poisson
+likelihood trick**, converting survival likelihoods into generalized
+linear models.
 
-This formulation enables efficient estimation using the **Poisson likelihood trick**, converting survival likelihoods into generalized linear models.
+Supported features:
 
-The model supports:
+-   right-censored survival data
+-   numeric and categorical covariates
+-   user-defined time intervals
+-   Wald inference and standard errors
+-   cluster-robust covariance estimation
 
-- right-censored survival data
-- arbitrary covariates (numeric and categorical)
-- user-defined time intervals
-- standard errors and Wald inference
-- robust (clustered) covariance estimation
-
----
+------------------------------------------------------------------------
 
 # Spatial Frailty Extension
 
-PEPH also supports **Leroux conditional autoregressive (CAR) spatial frailty models** for areal data such as ZIP codes.
+The package supports **Leroux conditional autoregressive (CAR) spatial
+frailty models**.
 
-The hazard model becomes
+The hazard becomes:
 
-\[
-h_i(t) = h_0(t)\exp(x_i^\top \beta + u_{g(i)})
-\]
+h_i(t) = h0(t) exp(x_iᵀβ + u_g(i))
 
-where
+where u_g is a spatial random effect indexed by geographic unit (e.g.,
+ZIP code).
 
-- \(u_g\) is a spatial random effect
-- \(g(i)\) indexes the spatial unit for subject \(i\)
+Frailties follow the Leroux CAR model:
 
-Frailties follow the **Leroux CAR model**
-
-\[
-u \sim N\left(0,\;(\tau Q(\rho))^{-1}\right)
-\]
+u \~ N(0, (τQ(ρ))⁻¹)
 
 with precision matrix
 
-\[
-Q(\rho) = (1-\rho)I + \rho(D-W)
-\]
+Q(ρ) = (1−ρ)I + ρ(D − W)
 
 where
 
-- \(W\) is the adjacency matrix
-- \(D\) is the degree matrix
-- \(0 \le \rho < 1\) controls spatial dependence
-- \(\tau\) controls overall precision
+-   W = adjacency matrix
+-   D = degree matrix
+-   ρ controls spatial dependence
+-   τ controls precision
 
-Frailty parameters are estimated via **maximum a posteriori (MAP) optimization**.
+Frailty parameters are estimated via **MAP optimization**.
 
----
+------------------------------------------------------------------------
 
 # Core Features
 
 ## Data Pipeline
 
-The package includes utilities to prepare survival datasets for PE modeling:
-
-- subject-level train/test splits
-- conversion from wide survival format to **long counting-process format**
-- categorical encoding with strict prediction-time validation
-- administrative censoring support
-
----
+-   subject-level train/test splits
+-   wide → long counting-process expansion
+-   categorical encoding with prediction-time validation
+-   administrative censoring support
 
 ## Model Fitting
 
-Two model types are currently supported:
-
 ### Piecewise Exponential PH
 
-Estimated using a **Poisson GLM formulation** implemented via `statsmodels`.
+Estimated via Poisson GLM using `statsmodels`.
 
-Features include:
+Features:
 
-- baseline hazard estimation
-- Wald confidence intervals
-- cluster-robust covariance
-- fast estimation for large datasets
+-   baseline hazard estimation
+-   Wald confidence intervals
+-   cluster-robust covariance
+-   efficient large dataset fitting
 
----
-
-### Spatial Frailty Model (Leroux CAR)
+### Spatial Frailty Model (Leroux)
 
 Adds spatially structured random effects with:
 
-- Leroux CAR prior
-- connected-component centering constraints
-- MAP estimation
-- compatibility with arbitrary spatial graphs
+-   Leroux CAR prior
+-   component-wise centering constraints
+-   MAP estimation
+-   compatibility with arbitrary spatial graphs
 
-Spatial structure is defined through a **`SpatialGraph`** object containing:
+------------------------------------------------------------------------
 
-- node labels (e.g., ZIP codes)
-- adjacency relationships
-- connected component structure
-
----
-
-## Prediction
+# Prediction
 
 The package supports prediction of:
 
-- survival probability \(S(t)\)
-- cumulative hazard \(H(t)\)
-- event risk \(1 - S(t)\)
+-   survival probability S(t)
+-   cumulative hazard H(t)
+-   event risk 1 − S(t)
 
-Predictions can incorporate frailty estimates when spatial models are used.
+Predictions incorporate spatial frailty effects when applicable.
 
----
+------------------------------------------------------------------------
 
-## Model Evaluation
-
-PEPH includes a suite of survival model evaluation tools:
+# Model Evaluation
 
 ### Discrimination
 
-- time-dependent AUC
-- concordance index (C-index)
+-   time-dependent AUC
+-   concordance index (C-index)
 
 ### Calibration
 
-- calibration curves
-- calibration slope
-- calibration in the large
-- Brier score
+-   calibration curves
+-   calibration slope
+-   calibration in the large
+-   Brier score
 
 ### Diagnostics
 
-- Cox–Snell residuals
-- interval hazard diagnostics
-- risk calibration plots
+-   Cox--Snell residuals
+-   interval hazard diagnostics
+-   calibration risk plots
 
-These metrics can be computed at multiple prediction horizons.
-
----
+------------------------------------------------------------------------
 
 # Configuration-Driven Pipeline
 
-Analyses are executed through a configuration file rather than command-line arguments.
+Example run:
 
-Example workflow:
-
-```bash
+``` bash
 python -m peph.cli.main run --config configs/run.yml
 ```
 
-Configuration files control:
-  - dataset paths
-  - covariates
-  - time intervals
-  - spatial graph inputs
-  - prediction horizons
-  - model settings
+Outputs are written to a timestamped directory under:
 
-Outputs are written to a timestamped directory under ```models/```
+models/
 
 Artifacts include:
-  - fitted model JSON
-  - coefficient tables
-  - prediction outputs
-  - evaluation metrics
-  - diagnostic plots
 
-## Testing and Validation
+-   fitted model JSON
+-   coefficient tables
+-   prediction outputs
+-   evaluation metrics
+-   diagnostic plots
 
-The package inlcudes a comprehensive `pytest` test suite covering:
-  - long-format expansion correctness
-  - parameter recovery under simulation
-  - robust covariance estimation
-  - spatial frailty optimization
-  - model artifact serialization
-  - pipeline execution tests
+------------------------------------------------------------------------
 
-Simulation-based tests validate recovery of both regression parameters and spatial frailty structure.
+# Installation
 
-## Intended Use
+Clone the repository and install in editable mode.
 
-PEPH is designed for large observational survival analyses, particularly in epidemiology and health services research.
+``` bash
+git clone https://github.com/<username>/PE_survival.git
+cd PE_survival
+pip install -e .
+```
 
-Typical applicatinos include:
-  - cancer survival modeling
-  - geographic health disparities
-  - health policy evaluation
-  - population-based risk prediction
+Run tests:
 
-The architecture is modular and designed to support future extensions: 
-  - non-proportional hazards model
-  - spline-smoothed baseline hazards
-  - additional spatial priors (e.g., BYM2)
-  - Bayesian inference methods
+``` bash
+pytest
+```
 
+Run slow simulation tests:
 
+``` bash
+pytest -m slow
+```
 
+------------------------------------------------------------------------
 
-```bash
+# Quickstart Example
+
+Run the pipeline:
+
+``` bash
 python -m peph.cli.main run --config configs/run.yml
+```
+
+Example output directory:
+
+models/ seer_crc_peph_2026-03-04/ model.json coef_table.parquet
+predictions.parquet metrics.json diagnostics/
+
+------------------------------------------------------------------------
+
+# Configuration Example
+
+``` yaml
+data:
+  input_csv: data/seer_crc_example.csv
+
+data_schema:
+  id_col: id
+  time_col: time
+  event_col: event
+  x_numeric:
+    - age_per10_centered
+    - cci
+    - tumor_size_log
+    - ses
+  x_categorical:
+    - sex
+    - stage
+  categorical_reference_levels:
+    sex: F
+    stage: I
+
+model:
+  breaks: [0,30,90,180,365,730,1825]
+
+evaluation:
+  horizons: [365,730,1825]
+
+split:
+  train_fraction: 0.7
+  seed: 123
+```
+
+Optional spatial section:
+
+``` yaml
+spatial:
+  model: leroux
+  area_col: zip
+  adjacency_file: data/zip_adjacency.csv
+```
+
+------------------------------------------------------------------------
+
+# Project Architecture
+
+src/peph/
+
+-   cli/ --- command line interface\
+-   config/ --- configuration schemas and loading\
+-   data/ --- dataset preparation utilities\
+-   model/ --- model fitting and prediction logic\
+-   spatial/ --- spatial graph utilities\
+-   pipeline/ --- full modeling workflow\
+-   diagnostics/ --- residuals and diagnostic plots\
+-   metrics/ --- model evaluation metrics\
+-   sim/ --- simulation utilities for testing
+
+tests/ --- pytest suite\
+configs/ --- example configs\
+models/ --- output artifacts
+
+------------------------------------------------------------------------
+
+# Statistical References
+
+Holford (1980) --- Analysis of rates and survivorship using log-linear
+models.
+
+Laird & Olivier (1981) --- Covariance analysis of censored survival data
+using log-linear techniques.
+
+Leroux et al. (2000) --- Estimation of disease rates in small areas.
+
+Harrell (2015) --- Regression Modeling Strategies.
+
+Uno et al. (2011) --- C-statistics for censored survival models.
+
+------------------------------------------------------------------------
+
+# Future Development
+
+Planned extensions:
+
+-   non-proportional hazards models
+-   spline-smoothed baseline hazards
+-   BYM2 spatial priors
+-   Bayesian inference
+-   improved scalability for large spatial graphs
+
+------------------------------------------------------------------------
+
+# Contributing
+
+Contributions are welcome. Please include:
+
+-   tests for new functionality
+-   passing pytest suite
+-   documentation updates when needed
