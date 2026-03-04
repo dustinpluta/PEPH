@@ -46,8 +46,8 @@ fit:
 
 spatial:
   area_col: zip
-  zips_path: graph/zips.csv
-  edges_path: graph/edges.csv
+  zips_path: data/graph/zips.csv
+  edges_path: data/graph/edges.csv
   edges_u_col: zip_u
   edges_v_col: zip_v
   allow_unseen_area: false
