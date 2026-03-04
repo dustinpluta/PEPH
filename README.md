@@ -22,9 +22,9 @@ All modeling steps are controlled via YAML configuration files, enabling reprodu
 
 PEPH implements the **piecewise exponential proportional hazards model**
 
-\[
+$
 h(t \mid x) = h_0(t)\exp(x^\top \beta)
-\]
+$
 
 where the baseline hazard is assumed constant within user-defined time intervals:
 
