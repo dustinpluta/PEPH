@@ -46,9 +46,9 @@ def run_pipeline(cfg: RunConfig) -> Path:
 
     # Validate columns exist
     required = (
-        [cfg.schema.id_col, cfg.schema.time_col, cfg.schema.event_col]
-        + cfg.schema.x_numeric
-        + cfg.schema.x_categorical
+        [cfg.data_schema.id_col, cfg.data_schema.time_col, cfg.data_schema.event_col]
+        + cfg.data_schema.x_numeric
+        + cfg.data_schema.x_categorical
     )
 
     # If spatial is enabled, area_col must exist in WIDE and must be carried to LONG.
@@ -62,11 +62,11 @@ def run_pipeline(cfg: RunConfig) -> Path:
     # Split
     split = train_test_split_subject(
         wide,
-        id_col=cfg.schema.id_col,
+        id_col=cfg.data_schema.id_col,
         test_size=cfg.split.test_size,
         seed=cfg.split.seed,
     )
-    train_wide, test_wide = apply_split(wide, id_col=cfg.schema.id_col, split=split)
+    train_wide, test_wide = apply_split(wide, id_col=cfg.data_schema.id_col, split=split)
 
     write_json(
         out_dir / "split_ids.json",
@@ -78,24 +78,24 @@ def run_pipeline(cfg: RunConfig) -> Path:
     write_table(test_wide, out_dir / "test_wide.parquet")
 
     # Expand to long
-    x_cols_all = cfg.schema.x_numeric + cfg.schema.x_categorical
+    x_cols_all = cfg.data_schema.x_numeric + cfg.data_schema.x_categorical
     if cfg.spatial is not None:
         # critical for Leroux: area_col must be present in long rows
         x_cols_all = x_cols_all + [cfg.spatial.area_col]
 
     long_train = expand_long(
         train_wide,
-        id_col=cfg.schema.id_col,
-        time_col=cfg.schema.time_col,
-        event_col=cfg.schema.event_col,
+        id_col=cfg.data_schema.id_col,
+        time_col=cfg.data_schema.time_col,
+        event_col=cfg.data_schema.event_col,
         x_cols=x_cols_all,
         breaks=cfg.time.breaks,
     )
     long_test = expand_long(
         test_wide,
-        id_col=cfg.schema.id_col,
-        time_col=cfg.schema.time_col,
-        event_col=cfg.schema.event_col,
+        id_col=cfg.data_schema.id_col,
+        time_col=cfg.data_schema.time_col,
+        event_col=cfg.data_schema.event_col,
         x_cols=x_cols_all,
         breaks=cfg.time.breaks,
     )
@@ -109,10 +109,10 @@ def run_pipeline(cfg: RunConfig) -> Path:
         long_train=long_train,
         train_wide=train_wide,
         breaks=cfg.time.breaks,
-        x_numeric=cfg.schema.x_numeric,
-        x_categorical=cfg.schema.x_categorical,
-        categorical_reference_levels=cfg.schema.categorical_reference_levels,
-        n_train_subjects=int(train_wide[cfg.schema.id_col].nunique()),
+        x_numeric=cfg.data_schema.x_numeric,
+        x_categorical=cfg.data_schema.x_categorical,
+        categorical_reference_levels=cfg.data_schema.categorical_reference_levels,
+        n_train_subjects=int(train_wide[cfg.data_schema.id_col].nunique()),
         covariance=cfg.fit.covariance,
         spatial_area_col=(cfg.spatial.area_col if cfg.spatial else None),
         spatial_zips_path=(cfg.spatial.zips_path if cfg.spatial else None),
@@ -139,8 +139,8 @@ def run_pipeline(cfg: RunConfig) -> Path:
 
     inf = inference_summary(
         fitted,
-        train_wide_time=train_wide[cfg.schema.time_col].to_numpy(dtype=float),
-        train_wide_event=train_wide[cfg.schema.event_col].to_numpy(dtype=int),
+        train_wide_time=train_wide[cfg.data_schema.time_col].to_numpy(dtype=float),
+        train_wide_event=train_wide[cfg.data_schema.event_col].to_numpy(dtype=int),
     )
     write_json(out_dir / "inference.json", inf)
 
@@ -164,9 +164,9 @@ def run_pipeline(cfg: RunConfig) -> Path:
 
     pred_df = pd.DataFrame(
         {
-            cfg.schema.id_col: test_wide[cfg.schema.id_col].to_numpy(),
-            cfg.schema.time_col: test_wide[cfg.schema.time_col].to_numpy(dtype=float),
-            cfg.schema.event_col: test_wide[cfg.schema.event_col].to_numpy(dtype=int),
+            cfg.data_schema.id_col: test_wide[cfg.data_schema.id_col].to_numpy(),
+            cfg.data_schema.time_col: test_wide[cfg.data_schema.time_col].to_numpy(dtype=float),
+            cfg.data_schema.event_col: test_wide[cfg.data_schema.event_col].to_numpy(dtype=int),
             "eta": eta.astype(float),
         }
     )
@@ -209,8 +209,8 @@ def run_pipeline(cfg: RunConfig) -> Path:
 
     # Metrics (test)
     metrics: Dict[str, Any] = {}
-    time = pred_df[cfg.schema.time_col].to_numpy(dtype=float)
-    event = pred_df[cfg.schema.event_col].to_numpy(dtype=int)
+    time = pred_df[cfg.data_schema.time_col].to_numpy(dtype=float)
+    event = pred_df[cfg.data_schema.event_col].to_numpy(dtype=int)
     score = pred_df["eta"].to_numpy(dtype=float)
 
     if cfg.metrics.discrimination.get("c_index", True):
@@ -250,14 +250,14 @@ def run_pipeline(cfg: RunConfig) -> Path:
 
     # Cox–Snell residuals (test)
     if cfg.metrics.residuals.get("cox_snell", True):
-        r = cox_snell_residuals(fitted, test_wide, time_col=cfg.schema.time_col)
+        r = cox_snell_residuals(fitted, test_wide, time_col=cfg.data_schema.time_col)
         metrics["cox_snell_mean"] = float(np.mean(r))
         metrics["cox_snell_var"] = float(np.var(r))
         resid_df = pd.DataFrame(
             {
-                cfg.schema.id_col: test_wide[cfg.schema.id_col].values,
+                cfg.data_schema.id_col: test_wide[cfg.data_schema.id_col].values,
                 "cox_snell": r,
-                cfg.schema.event_col: test_wide[cfg.schema.event_col].values,
+                cfg.data_schema.event_col: test_wide[cfg.data_schema.event_col].values,
             }
         )
         write_table(resid_df, out_dir / "cox_snell_residuals.parquet")
@@ -272,7 +272,7 @@ def run_pipeline(cfg: RunConfig) -> Path:
         resid_df = pd.read_parquet(out_dir / "cox_snell_residuals.parquet")
         plot_cox_snell(
             resid_df["cox_snell"].to_numpy(dtype=float),
-            resid_df[cfg.schema.event_col].to_numpy(dtype=int),
+            resid_df[cfg.data_schema.event_col].to_numpy(dtype=int),
             plots_dir / "cox_snell.png",
         )
 
@@ -281,8 +281,8 @@ def run_pipeline(cfg: RunConfig) -> Path:
             rc = f"risk_t{int(tau)}"
             plot_calibration_risk_by_quantile(
                 pred_df,
-                time_col=cfg.schema.time_col,
-                event_col=cfg.schema.event_col,
+                time_col=cfg.data_schema.time_col,
+                event_col=cfg.data_schema.event_col,
                 risk_col=rc,
                 tau=float(tau),
                 n_bins=10,
