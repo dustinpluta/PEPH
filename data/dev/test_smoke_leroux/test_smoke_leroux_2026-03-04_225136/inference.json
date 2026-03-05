@@ -1,0 +1,9 @@
+{
+  "aic": 43.5042849000735,
+  "covariance": "classical",
+  "deviance": 1.5042849000735021,
+  "llf": -10.75214245003675,
+  "n_censored_train": 13.0,
+  "n_events_train": 10.0,
+  "n_train": 23.0
+}

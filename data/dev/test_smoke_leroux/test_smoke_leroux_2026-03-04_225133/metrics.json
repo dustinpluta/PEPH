@@ -1,0 +1,21 @@
+{
+  "auc_t1825": NaN,
+  "auc_t365": NaN,
+  "auc_t730": NaN,
+  "brier_t1825": 0.38541570153551763,
+  "brier_t365": 0.5339590234917376,
+  "brier_t730": 0.4057568926344533,
+  "c_index": 0.75,
+  "cal_int_t1825": NaN,
+  "cal_int_t365": NaN,
+  "cal_int_t730": NaN,
+  "cal_slope_t1825": NaN,
+  "cal_slope_t365": NaN,
+  "cal_slope_t730": NaN,
+  "cox_snell_mean": 0.19884727616167566,
+  "cox_snell_var": 0.13629740603924403,
+  "leroux_rho_hat": 0.05926873145837866,
+  "leroux_tau_hat": 255674791216577.12,
+  "morans_I_u": -0.30407271602930636,
+  "morans_I_u_z": NaN
+}

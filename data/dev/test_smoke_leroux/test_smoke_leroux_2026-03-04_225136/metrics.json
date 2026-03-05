@@ -1,0 +1,17 @@
+{
+  "auc_t1825": NaN,
+  "auc_t365": NaN,
+  "auc_t730": NaN,
+  "brier_t1825": 0.3854157012604597,
+  "brier_t365": 0.5339590234917372,
+  "brier_t730": 0.40575689204675686,
+  "c_index": 0.75,
+  "cal_int_t1825": NaN,
+  "cal_int_t365": NaN,
+  "cal_int_t730": NaN,
+  "cal_slope_t1825": NaN,
+  "cal_slope_t365": NaN,
+  "cal_slope_t730": NaN,
+  "cox_snell_mean": 0.1988472761616761,
+  "cox_snell_var": 0.1362974060392451
+}

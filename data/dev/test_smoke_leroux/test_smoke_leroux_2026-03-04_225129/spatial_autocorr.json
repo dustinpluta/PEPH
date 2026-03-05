@@ -1,0 +1,8 @@
+{
+  "morans_I_u": {
+    "I": -0.30407271602930636,
+    "expected": -0.5,
+    "variance": NaN,
+    "z": NaN
+  }
+}
