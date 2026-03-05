@@ -87,7 +87,11 @@ def _poisson_loglik_with_u(
     """
     eta = alpha[k] + X @ beta + u[area_idx]
     log_mu = np.log(exposure) + eta
-    mu = np.exp(log_mu)
+    # Avoid exp overflow during numerical differentiation / line search.
+    # float64 exp overflows around 709.78.
+    LOG_MU_MAX = 700.0
+    LOG_MU_MIN = -745.0  # exp(-745) underflows to ~0, which is fine here.
+    mu = np.exp(np.clip(log_mu, LOG_MU_MIN, LOG_MU_MAX))
     return float(np.sum(y * log_mu - mu))
 
 
@@ -169,4 +173,7 @@ def leroux_neg_log_posterior(
     nlp_rho = -(logp_rho + log_jac)
 
     # Total negative log posterior (ignore constants)
-    return float(-ll + nlp_u + nlp_tau + nlp_rho)
+    obj = float(-ll + nlp_u + nlp_tau + nlp_rho)
+    if not np.isfinite(obj):
+        return 1e300  # large finite penalty keeps scipy.numdiff stable
+    return obj

@@ -47,9 +47,14 @@ def baseline_table(model: FittedPEPHModel, alpha: float = 0.05) -> pd.DataFrame:
     hi_log = log_nu + zcrit * se
 
     nu = np.exp(log_nu)
-    lo_nu = np.exp(lo_log)
-    hi_nu = np.exp(hi_log)
+    
+    # float64 exp overflow around ~709.78
+    EXP_MAX = 700.0
+    EXP_MIN = -745.0  # underflow to 0 is fine, but keep finite logs
 
+    hi_nu = np.exp(np.clip(hi_log, EXP_MIN, EXP_MAX))
+    lo_nu = np.exp(np.clip(lo_log, EXP_MIN, EXP_MAX))
+    
     return pd.DataFrame(
         {
             "k": np.arange(K, dtype=int),
