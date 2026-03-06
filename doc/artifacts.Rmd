@@ -1,0 +1,491 @@
+# PEPH Artifact Documentation
+
+This document describes **all artifacts produced by a PEPH pipeline run**, their structure, and how they should be interpreted.
+
+A pipeline execution produces a **fully reproducible run directory** under:
+
+models/
+
+Each run is written to a timestamped folder:
+
+models/<run_name>_<timestamp>/
+
+Example:
+
+models/seer_crc_peph_v1_2026-03-05_1124/
+
+Artifacts are organized to support:
+
+• reproducibility  
+• post-hoc analysis  
+• reporting  
+• model inspection  
+• debugging  
+• downstream research workflows  
+
+The pipeline is designed so that **everything needed to understand the model fit is stored in the run directory**.
+
+---------------------------------------------------------------------
+
+# 1. Run Directory Layout
+
+A typical run directory looks like:
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----                plots
+d-----                predictions
+d-----                tables
+
+-a----                baseline_table.parquet
+-a----                coef_table.parquet
+-a----                config_resolved.yml
+-a----                cox_snell_residuals.parquet
+-a----                frailty_summary.json
+-a----                frailty_table.parquet
+-a----                inference.json
+-a----                long_test.parquet
+-a----                long_train.parquet
+-a----                metrics.json
+-a----                model.json
+-a----                spatial_autocorr.json
+-a----                split_ids.json
+-a----                test_wide.parquet
+-a----                train_wide.parquet
+
+The artifacts can be grouped into:
+
+1. model artifacts  
+2. data artifacts  
+3. evaluation artifacts  
+4. spatial diagnostics  
+5. plots  
+
+---------------------------------------------------------------------
+
+# 2. Model Artifacts
+
+These describe the **fitted statistical model**.
+
+---------------------------------------------------------------------
+
+## 2.1 model.json
+
+The primary serialized model artifact.
+
+This file is sufficient to **reload the fitted model**.
+
+Loadable with:
+
+FittedPEPHModel.load(path)
+
+Contents include:
+
+• model type (PH or spatial)  
+• regression coefficients  
+• baseline hazards  
+• feature encoding metadata  
+• spatial frailty parameters (if present)  
+
+Example structure:
+
+{
+  "model_type": "peph_leroux",
+  "beta": {...},
+  "baseline": {...},
+  "encoding": {...},
+  "spatial": {
+      "area_col": "zip",
+      "zips": [...],
+      "u": [...],
+      "rho": 0.62,
+      "tau": 1.8
+  }
+}
+
+This file is the **canonical model representation**.
+
+---------------------------------------------------------------------
+
+## 2.2 coef_table.parquet
+
+Table of regression coefficients.
+
+Columns:
+
+feature  
+coef  
+std_err  
+z  
+p_value  
+ci_lower  
+ci_upper  
+
+These correspond to the regression terms in the PH model.
+
+Categorical variables appear as dummy variables.
+
+Example:
+
+feature        coef     std_err     z     p_value
+age            0.034    0.004
+stage_III      0.52     0.09
+sex_M         -0.11     0.05
+
+---------------------------------------------------------------------
+
+## 2.3 baseline_table.parquet
+
+Estimated baseline hazards by interval.
+
+Columns:
+
+interval_start  
+interval_end  
+baseline_log_hazard  
+baseline_hazard  
+
+These define the piecewise constant baseline hazard.
+
+Used for:
+
+• prediction  
+• cumulative hazard computation  
+
+---------------------------------------------------------------------
+
+## 2.4 inference.json
+
+Summary of model inference configuration.
+
+Includes:
+
+• covariance estimator  
+• optimization settings  
+• convergence flags  
+
+Example:
+
+{
+  "covariance": "cluster_id",
+  "optimizer": "lbfgs",
+  "converged": true
+}
+
+---------------------------------------------------------------------
+
+# 3. Data Artifacts
+
+These describe the **training and testing data used in the model**.
+
+---------------------------------------------------------------------
+
+## 3.1 train_wide.parquet
+
+Training dataset in wide format.
+
+One row per subject.
+
+Contains:
+
+id  
+time  
+event  
+covariates  
+
+Used for:
+
+• debugging  
+• re-fitting models  
+• reproducing training data  
+
+---------------------------------------------------------------------
+
+## 3.2 test_wide.parquet
+
+Test dataset used for prediction and evaluation.
+
+Contains identical columns as training set.
+
+---------------------------------------------------------------------
+
+## 3.3 long_train.parquet
+
+Expanded long-format training data.
+
+Columns include:
+
+id  
+interval  
+exposure_time  
+event  
+covariates  
+
+Used internally for the Poisson likelihood.
+
+Saved for transparency and debugging.
+
+---------------------------------------------------------------------
+
+## 3.4 long_test.parquet
+
+Long-format expansion of the test set.
+
+Used during prediction.
+
+---------------------------------------------------------------------
+
+## 3.5 split_ids.json
+
+Defines the train/test split.
+
+Structure:
+
+{
+  "train_ids": [...],
+  "test_ids": [...]
+}
+
+Ensures exact reproducibility of model evaluation.
+
+---------------------------------------------------------------------
+
+# 4. Evaluation Artifacts
+
+These quantify model performance.
+
+---------------------------------------------------------------------
+
+## 4.1 metrics.json
+
+Summary of predictive performance.
+
+Includes:
+
+• time-dependent AUC  
+• concordance index  
+• Brier score  
+• calibration intercept  
+• calibration slope  
+
+Example:
+
+{
+  "c_index": 0.71,
+  "auc_365": 0.72,
+  "auc_730": 0.70,
+  "brier_365": 0.18,
+  "calibration_intercept": -0.03,
+  "calibration_slope": 0.98
+}
+
+---------------------------------------------------------------------
+
+## 4.2 cox_snell_residuals.parquet
+
+Cox–Snell residuals for model diagnostics.
+
+Columns:
+
+id  
+residual  
+
+Used for checking:
+
+• goodness-of-fit  
+• model calibration  
+
+Residuals should approximately follow an exponential distribution.
+
+---------------------------------------------------------------------
+
+# 5. Spatial Frailty Artifacts
+
+Produced only when the **spatial backend** is used.
+
+---------------------------------------------------------------------
+
+## 5.1 frailty_table.parquet
+
+Estimated spatial random effects.
+
+Columns:
+
+zip  
+u_hat  
+hazard_multiplier  
+component  
+
+Where:
+
+hazard_multiplier = exp(u_hat)
+
+Interprets the multiplicative effect of spatial frailty.
+
+Example:
+
+zip      u_hat     hazard_multiplier
+30909    0.0059    1.006
+30101   -0.0225    0.978
+
+---------------------------------------------------------------------
+
+## 5.2 frailty_summary.json
+
+Summary statistics of the frailty distribution.
+
+Includes:
+
+• mean frailty  
+• standard deviation  
+• quantiles  
+
+Example:
+
+{
+  "mean": 0.0,
+  "sd": 0.07,
+  "min": -0.23,
+  "max": 0.19
+}
+
+---------------------------------------------------------------------
+
+## 5.3 spatial_autocorr.json
+
+Spatial autocorrelation diagnostics.
+
+Includes:
+
+Moran's I statistic
+
+Example:
+
+{
+  "morans_I": 0.21,
+  "p_value": 0.003
+}
+
+Positive values indicate spatial clustering.
+
+---------------------------------------------------------------------
+
+# 6. Predictions Directory
+
+Directory:
+
+predictions/
+
+Contains prediction tables for the test set.
+
+Typical files:
+
+risk_predictions.parquet  
+survival_predictions.parquet  
+
+Each row corresponds to a subject.
+
+Example columns:
+
+id  
+risk_365  
+risk_730  
+risk_1825  
+
+Used for evaluation metrics.
+
+---------------------------------------------------------------------
+
+# 7. Tables Directory
+
+Directory:
+
+tables/
+
+Contains exported summary tables for reporting.
+
+Typical outputs:
+
+coef_table.csv  
+frailty_table.csv  
+
+Generated by reporting utilities.
+
+---------------------------------------------------------------------
+
+# 8. Plots Directory
+
+Directory:
+
+plots/
+
+Contains visualization outputs.
+
+Examples:
+
+calibration plots  
+Cox–Snell diagnostic plots  
+frailty caterpillar plots  
+spatial maps (if implemented)
+
+Plots are generated using matplotlib.
+
+---------------------------------------------------------------------
+
+# 9. Configuration Artifact
+
+## 9.1 config_resolved.yml
+
+Final resolved configuration used for the run.
+
+Includes:
+
+• default values  
+• user overrides  
+
+This ensures the run can be reproduced exactly.
+
+---------------------------------------------------------------------
+
+# 10. Reproducibility Guarantee
+
+A PEPH run directory contains everything required to reproduce the analysis:
+
+configuration  
+training data  
+test data  
+model parameters  
+evaluation metrics  
+
+Given a run directory, one can:
+
+• reload the model  
+• regenerate predictions  
+• inspect diagnostics  
+• reproduce reported metrics  
+
+---------------------------------------------------------------------
+
+# 11. Best Practices
+
+When analyzing results:
+
+Always keep run directories immutable.
+
+Never overwrite artifacts.
+
+Use reporting utilities to generate summaries rather than modifying artifacts.
+
+For research projects, store run directories under version control or archival storage.
+
+---------------------------------------------------------------------
+
+# 12. Planned Future Artifacts
+
+Upcoming features may introduce additional artifacts:
+
+baseline_spline_table.parquet  
+nonph_beta_table.parquet  
+treatment_effect_summary.json  
+
+These will follow the same artifact conventions described here.

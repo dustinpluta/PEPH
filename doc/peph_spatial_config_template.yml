@@ -1,0 +1,78 @@
+# Minimal PEPH configuration for a spatial frailty run
+# This template runs a piecewise exponential PH model
+# with Leroux spatial frailty.
+
+run_name: peph_spatial_example_run
+
+data:
+  path: data/example_survival_data.csv
+  format: csv
+
+data_schema:
+  id_col: id
+  time_col: time
+  event_col: event
+
+  x_numeric:
+    - age
+    - comorbidity_index
+
+  x_categorical:
+    - sex
+
+  categorical_reference_levels:
+    sex: F
+
+time:
+  scale: days
+  breaks: [0, 365, 730, 1825]
+  interval_closed: left
+  interval_open: right
+
+split:
+  strategy: subject_random
+  test_size: 0.25
+  seed: 123
+
+fit:
+  backend: map_leroux
+  leroux_max_iter: 200
+  leroux_ftol: 1e-7
+  rho_clip: 1e-6
+  q_jitter: 1e-8
+  prior_logtau_sd: 10.0
+  prior_rho_a: 1.0
+  prior_rho_b: 1.0
+
+spatial:
+  area_col: zip
+  zips_path: data/graph/zips.csv
+  edges_path: data/graph/edges.csv
+  edges_u_col: zip_u
+  edges_v_col: zip_v
+  allow_unseen_area: false
+
+predict:
+  horizons_days: [365, 730, 1825]
+  grid:
+    use_breaks: true
+    extra_times: []
+
+metrics:
+  compute_on: test
+  discrimination:
+    c_index: true
+    time_dependent_auc: true
+  calibration:
+    calibration_in_the_large: true
+    calibration_slope: true
+    brier_score: true
+  residuals:
+    cox_snell: true
+
+plots:
+  calibration_risk: true
+  cox_snell: true
+
+output:
+  root_dir: models

@@ -1,315 +1,554 @@
-# Developer Guide
+# PEPH Developer Guide
 
-This document provides an overview of the internal architecture of PEPH
-and guidelines for contributing to the codebase.
+This document provides a comprehensive guide to the internal architecture,
+design philosophy, and development workflow of the PEPH project.
 
-The goal of this guide is to make it easy to:
+The goal of this guide is to make it possible for a new developer to:
 
--   understand how the statistical model maps to the code
--   extend the package (e.g., new priors, new metrics, non-PH support)
--   modify the pipeline safely
--   maintain performance and reproducibility
+- understand how the statistical model maps to the code
+- extend the modeling framework safely
+- modify the pipeline
+- add diagnostics, metrics, and reporting
+- maintain reproducibility and performance
 
-------------------------------------------------------------------------
+PEPH is designed as a production-grade implementation of **piecewise
+exponential proportional hazards (PEPH) models** with optional
+**spatial frailty via the Leroux CAR model**.
 
-# 1. High-Level Architecture
+The codebase prioritizes:
 
-PEPH is organized around a **configuration-driven modeling pipeline**.
+- statistical correctness
+- modular architecture
+- reproducible artifacts
+- extensibility for epidemiologic research.
 
-Core flow:
+------------------------------------------------------------
 
-1.  Load YAML config → validate via `RunConfig`
-2.  Load dataset (wide survival format)
-3.  Subject-level train/test split
-4.  Expand training data to long format
-5.  Fit model (PH or spatial frailty)
-6.  Generate predictions
-7.  Compute metrics and diagnostics
-8.  Save artifacts
+# 1. Conceptual Overview
 
-Everything is orchestrated through:
+The package implements survival analysis using a **piecewise exponential
+proportional hazards model**, optionally augmented with **spatial frailty**.
+
+The workflow is organized around a **configuration-driven modeling pipeline**.
+
+High-level workflow:
+
+1. Load YAML configuration
+2. Validate configuration via Pydantic schema
+3. Load dataset (wide survival format)
+4. Perform subject-level train/test split
+5. Expand training data to long format
+6. Fit the survival model
+7. Generate predictions for the test set
+8. Compute metrics and diagnostics
+9. Save artifacts and plots
+
+The entire process is orchestrated by a single pipeline function.
+
+Pipeline entrypoint:
 
     peph.pipeline.run.run_pipeline
 
-CLI entry point:
+Command line entrypoint:
 
     python -m peph.cli.main run --config path/to/config.yml
 
-------------------------------------------------------------------------
+------------------------------------------------------------
 
-# 2. Module Structure
+# 2. Repository Structure
+
+Source code is located in:
 
     src/peph/
 
-      cli/
-          main.py                # CLI entrypoint
+Top-level structure:
 
-      config/
-          schema.py              # Pydantic config schema + loader
+    cli/
+        main.py
 
-      data/
-          long.py                # Wide → long PE expansion
+    config/
+        schema.py
 
-      model/
-          design.py              # Design matrix construction
-          fit.py                 # PH model fitting
-          fit_leroux.py          # Spatial MAP fitting
-          leroux_objective.py    # Negative log-posterior
-          predict.py             # Survival / risk prediction
+    data/
+        long.py
 
-      spatial/
-          graph.py               # SpatialGraph dataclass
-          weights.py             # Area weight construction
+    model/
+        design.py
+        fit.py
+        fit_leroux.py
+        leroux_objective.py
+        predict.py
+        result.py
 
-      metrics/
-          auc.py
-          brier.py
-          calibration.py
+    spatial/
+        graph.py
+        weights.py
 
-      diagnostics/
-          residuals.py
+    metrics/
+        auc.py
+        brier.py
+        calibration.py
 
-      pipeline/
-          run.py                 # End-to-end workflow
+    diagnostics/
+        residuals.py
 
-      sim/
-          peph.py
-          spatial.py             # Simulation utilities (testing)
+    plots/
+        calibration.py
+        diagnostics.py
+        spatial.py
+
+    pipeline/
+        run.py
+
+    report/
+        cli.py
+        tables.py
+
+    sim/
+        ph.py
+        peph.py
+        spatial.py
+
+Additional directories:
 
     tests/
     configs/
     models/
 
-------------------------------------------------------------------------
+------------------------------------------------------------
 
-# 3. Core Design Principles
+# 3. Configuration System
 
-### 3.1 Configuration-Driven
+PEPH uses a strict **configuration-driven design**.
 
-All runs are controlled via YAML. No modeling parameters should be
-hardcoded in the pipeline.
+All modeling behavior is controlled by YAML configuration files.
 
-The config schema lives in:
+Example invocation:
 
-    peph.config.schema
+    python -m peph.cli.main run --config configs/run1.yml
 
-Changes to the schema should:
+The configuration schema is defined in:
 
--   update `RunConfig`
--   update docs (`config_reference.md`)
--   update example configs
--   preserve backward compatibility when possible
+    peph.config.schema.RunConfig
 
-------------------------------------------------------------------------
+Responsibilities of the schema:
 
-### 3.2 Explicit Design Matrix Construction
+- validate input parameters
+- enforce allowed model backends
+- define modeling options
+- ensure reproducibility
 
-Design matrix logic lives in:
+Major configuration sections include:
 
-    peph.model.design
+    data
+    data_schema
+    model
+    fit
+    prediction
+    metrics
+    diagnostics
+    output
 
-Key responsibilities:
+When modifying configuration:
 
--   numeric covariate extraction
--   categorical one-hot encoding
--   reference level enforcement
--   strict prediction-time validation
--   feature name tracking
+1. Update RunConfig
+2. Update documentation
+3. Update example configs
+4. Update tests
 
-Avoid embedding design logic in fitting functions.
+------------------------------------------------------------
 
-------------------------------------------------------------------------
+# 4. Data Representation
 
-### 3.3 Separation of PH and Spatial Logic
+PEPH uses two primary data representations.
 
-`fit.py` implements classical PE-PH.
+Wide format:
 
-`fit_leroux.py` wraps PH logic and augments with:
+One row per subject.
 
--   spatial frailty parameters
--   MAP optimization
--   CAR precision construction
+Required columns:
 
-The PH implementation must remain usable independently.
+    id
+    time
+    event
 
-------------------------------------------------------------------------
+Additional covariates are defined in the config.
 
-### 3.4 Sparse Spatial Operations
+Long format:
 
-Spatial graphs use CSR matrices:
+After expansion, each subject contributes rows for each time interval.
 
--   `SpatialGraph.W()` returns sparse adjacency
--   `SpatialGraph.leroux_Q(rho)` builds sparse precision
+Columns include:
 
-Avoid dense matrix construction for large graphs.
+    id
+    interval index
+    exposure time
+    event indicator
+    covariates
 
-------------------------------------------------------------------------
+Long-format expansion is implemented in:
 
-### 3.5 Reproducibility
+    peph.data.long.expand_long
 
-Artifacts are saved to JSON / Parquet.
+Responsibilities:
 
-Model JSON must contain:
+- apply breakpoints
+- compute exposure time
+- assign events to intervals
+- replicate covariates
 
--   parameter estimates
--   baseline hazards
--   spatial parameters (if present)
--   encoding metadata
--   config snapshot (recommended future improvement)
+The interval convention is:
 
-Round-trip serialization is covered by tests.
+    left-closed, right-open
 
-------------------------------------------------------------------------
+Events occurring exactly on a breakpoint are assigned to the interval
+starting at that breakpoint.
 
-# 4. How the Statistical Model Maps to Code
+------------------------------------------------------------
 
-  Statistical Object   Code Location
-  -------------------- -----------------------
-  Baseline α_k         `fit.py`
-  β coefficients       `fit.py`
-  Long expansion       `data/long.py`
-  Poisson likelihood   `statsmodels GLM`
-  Frailty vector u     `fit_leroux.py`
-  Q(ρ) precision       `spatial/graph.py`
-  Centering operator   `leroux_objective.py`
-  MAP objective        `leroux_objective.py`
+# 5. Model Implementation
 
-------------------------------------------------------------------------
+## 5.1 Piecewise Exponential PH Model
 
-# 5. Adding New Features
+The baseline model is a piecewise exponential proportional hazards model.
 
-## 5.1 Non-Proportional Hazards
+Hazard:
 
-Likely extension path:
+    h_i(t) = exp(α_k + x_i β)
 
--   allow interval-specific β_k
--   modify design matrix to include interactions with interval
-    indicators
--   extend prediction logic accordingly
+Where:
 
-Recommended location:
+    α_k = baseline log-hazard in interval k
+    β = regression coefficients
 
-    peph.model.fit_nonph.py
+Likelihood is implemented using the **Poisson trick**.
 
-------------------------------------------------------------------------
+Long-format observations are treated as Poisson counts with log exposure offsets.
 
-## 5.2 Alternative Spatial Priors (e.g., BYM2)
+Model fitting is performed with:
 
-Add:
+    statsmodels GLM (Poisson)
 
--   new precision construction
--   new hyperparameter transform
--   update MAP objective
+Code location:
 
-Avoid modifying Leroux code directly --- create a new backend.
+    peph.model.fit
 
-------------------------------------------------------------------------
+Outputs:
 
-## 5.3 New Metrics
+- coefficient estimates
+- standard errors
+- baseline hazards
+- inference statistics
 
-Add file under:
+------------------------------------------------------------
 
-    peph.metrics/
+## 5.2 Spatial Frailty Model
 
-Metrics should:
+Spatial frailty is implemented using the **Leroux CAR model**.
 
--   operate on test-wide data
--   accept predicted risks
--   not depend on fitting internals
+Extended hazard:
 
-Register metric in pipeline run logic.
+    h_i(t) = exp(α_k + x_i β + u_{area(i)})
 
-------------------------------------------------------------------------
+Frailty vector:
 
-# 6. Testing Strategy
+    u ~ N(0, τ Q(ρ)^(-1))
 
-PEPH uses two classes of tests:
+Precision matrix:
 
-### Fast tests
+    Q(ρ) = (1 − ρ) I + ρ (D − W)
 
--   unit tests
--   design matrix correctness
--   serialization round-trip
--   pipeline smoke tests
+Where:
 
-### Slow tests (`@pytest.mark.slow`)
+    W = adjacency matrix
+    D = degree matrix
+    ρ = spatial dependence parameter
+    τ = precision parameter
 
--   parameter recovery
--   spatial recovery
--   simulation-based validation
+Code locations:
 
-Before merging a major modeling change, run:
+    peph.model.fit_leroux
+    peph.model.leroux_objective
+    peph.spatial.graph
+
+Estimation uses MAP optimization.
+
+------------------------------------------------------------
+
+# 6. Spatial Graph Representation
+
+Spatial graphs are represented by:
+
+    SpatialGraph dataclass
+
+Location:
+
+    peph.spatial.graph
+
+Fields include:
+
+    zips
+    edges
+    W_csr_data
+    components
+
+Key methods:
+
+    W()            → adjacency matrix
+    degree()       → node degrees
+    leroux_Q(rho)  → precision matrix
+    component_ids()
+
+Graphs are stored using sparse CSR format.
+
+------------------------------------------------------------
+
+# 7. Prediction System
+
+Prediction logic is implemented in:
+
+    peph.model.predict
+
+Predictions include:
+
+- survival probabilities
+- cumulative hazard
+- risk at specified horizons
+
+Prediction requires:
+
+- fitted model artifact
+- test design matrix
+- baseline hazard
+
+Predictions are stored under:
+
+    predictions/
+
+------------------------------------------------------------
+
+# 8. Metrics and Diagnostics
+
+Metrics are computed on the test set.
+
+Implemented metrics include:
+
+Time-dependent discrimination:
+
+    time-dependent AUC
+    concordance index
+
+Calibration:
+
+    calibration-in-the-large
+    calibration slope
+
+Accuracy:
+
+    Brier score
+
+Diagnostics:
+
+    Cox-Snell residuals
+
+Metric modules live under:
+
+    peph.metrics
+
+Diagnostic code lives under:
+
+    peph.diagnostics
+
+------------------------------------------------------------
+
+# 9. Output Artifacts
+
+Each pipeline run produces a directory under:
+
+    models/
+
+Example contents:
+
+    baseline_table.parquet
+    coef_table.parquet
+    frailty_table.parquet
+    metrics.json
+    model.json
+    spatial_autocorr.json
+    predictions/
+    plots/
+
+Artifacts are designed for reproducibility.
+
+Model artifacts can be reloaded using:
+
+    FittedPEPHModel.load()
+
+------------------------------------------------------------
+
+# 10. Simulation Framework
+
+Simulation tools are located in:
+
+    peph.sim
+
+Components:
+
+    ph.py
+    spatial.py
+    peph.py
+
+Simulation supports:
+
+- baseline PH models
+- spatial frailty models
+- parameter recovery tests
+
+Simulations are used for:
+
+- validation
+- testing
+- methodological experiments
+
+------------------------------------------------------------
+
+# 11. Reporting Utilities
+
+Reporting CLI is implemented under:
+
+    peph.report
+
+Capabilities include:
+
+- coefficient tables
+- metrics summaries
+- frailty summaries
+- spatial risk shift tables
+
+Example command:
+
+    python -m peph.cli.main report coef --run-dir models/run123
+
+Tables can be printed to console or exported to CSV.
+
+------------------------------------------------------------
+
+# 12. Testing Strategy
+
+Tests are located in:
+
+    tests/
+
+Two classes of tests exist.
+
+Fast tests:
+
+- unit tests
+- serialization tests
+- design matrix tests
+- pipeline smoke tests
+
+Slow tests:
+
+- simulation recovery
+- spatial recovery
+- end-to-end validation
+
+Run all tests:
 
     pytest
+
+Run slow tests:
+
     pytest -m slow
 
-------------------------------------------------------------------------
+------------------------------------------------------------
 
-# 7. Performance Considerations
+# 13. Performance Considerations
 
-SEER-scale data may include:
+Typical target datasets include SEER-Medicare cohorts.
 
--   100k--500k subjects
--   30k+ ZIP codes
+Scale:
 
-Critical areas:
+    100k – 500k subjects
+    thousands of ZIP codes
 
--   long-format expansion memory usage
--   sparse precision matrix operations
--   repeated factorizations in MAP optimization
--   prediction vectorization
+Critical performance areas:
+
+- long-format expansion
+- sparse matrix operations
+- MAP optimization
+- prediction vectorization
 
 Avoid:
 
--   dense G×G matrices
--   repeated graph construction
--   repeated design matrix building in loops
+- dense spatial matrices
+- repeated graph construction
+- unnecessary dataframe copies
 
-------------------------------------------------------------------------
+------------------------------------------------------------
 
-# 8. Coding Standards
+# 14. Coding Standards
 
--   Prefer explicit variable names over compact notation
--   Keep statistical and engineering logic separated
--   Write tests for every new feature
--   Avoid silent fallback behaviors
--   Fail loudly on invalid config or unseen categories (unless
-    explicitly allowed)
+General guidelines:
 
-------------------------------------------------------------------------
+- use explicit variable names
+- isolate statistical logic from pipeline code
+- maintain modular functions
+- fail loudly on invalid configurations
+- write tests for every new feature
 
-# 9. Suggested Future Refactors
+All new modeling features should include:
 
--   Add model artifact schema versioning
--   Cache sparse Cholesky factorizations in Leroux optimization
--   Add marginal frailty prediction
--   Add baseline hazard smoothing option
--   Improve memory efficiency in long expansion
+- simulation validation
+- unit tests
+- documentation updates
 
-------------------------------------------------------------------------
+------------------------------------------------------------
 
-# 10. Contribution Workflow
+# 15. Planned Extensions
 
-1.  Create feature branch
-2.  Implement change
-3.  Add/adjust tests
-4.  Run full test suite
-5.  Update documentation
-6.  Submit pull request
+Upcoming modeling features include:
 
-Major statistical changes should include simulation validation.
+Non-proportional hazards
 
-------------------------------------------------------------------------
+Smoothed baseline hazards
 
-# 11. Philosophy
+Time-to-treatment effects
 
-PEPH prioritizes:
+Additional spatial priors (BYM2)
 
--   statistical correctness
--   reproducibility
--   transparency
--   modular extensibility
+Improved frailty inference
 
-The goal is not to be a general-purpose survival package, but to provide
-a **robust, production-grade implementation of PE-PH models suitable for
-epidemiologic research.**
+Memory-optimized long expansion
+
+------------------------------------------------------------
+
+# 16. Development Workflow
+
+Recommended workflow:
+
+1. create feature branch
+2. implement feature
+3. add tests
+4. run full test suite
+5. update documentation
+6. submit pull request
+
+Major modeling changes should include simulation validation.
+
+------------------------------------------------------------
+
+# 17. Project Philosophy
+
+PEPH is intended to be:
+
+- statistically rigorous
+- reproducible
+- transparent
+- extensible
+
+It is not intended to be a general-purpose survival library.
+
+Instead, it focuses on providing a **robust implementation of
+piecewise exponential survival models for epidemiologic research**.
