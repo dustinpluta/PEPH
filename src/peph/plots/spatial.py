@@ -5,8 +5,9 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
 
 def plot_frailty_caterpillar(
     frailty_df: pd.DataFrame,  # columns: zip,u_hat (sorted or not)

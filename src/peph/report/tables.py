@@ -7,7 +7,9 @@ import numpy as np
 import pandas as pd
 
 from peph.report.discover import RunArtifacts
+from peph.report.discover import discover_run_artifacts
 from peph.utils.json import read_json
+from peph.model.result import FittedPEPHModel
 
 
 def load_metrics(art: RunArtifacts) -> Dict[str, Any]:
@@ -30,7 +32,7 @@ def load_baseline_table(art: RunArtifacts) -> pd.DataFrame:
 
 def load_frailty_table(art: RunArtifacts) -> pd.DataFrame:
     if art.frailty_table is None:
-        raise FileNotFoundError(f"frailty_table.parquet not found under: {art.run_dir}")
+        raise FileNotFoundError(f"frailty_table.parquet not found under: {art.run_dir}")   
     return pd.read_parquet(art.frailty_table)
 
 
@@ -95,3 +97,75 @@ def top_terms(
             out = out.sort_values("_abs_z", ascending=False).drop(columns=["_abs_z"])
 
     return out.head(int(top))
+
+def _baseline_cumhaz_at_time(breaks: list[float], nu: np.ndarray, t: float) -> float:
+    """
+    Baseline cumulative hazard H0(t) for piecewise-constant baseline hazard.
+    Intervals use [a,b) convention.
+    """
+    H0 = 0.0
+    for k in range(len(breaks) - 1):
+        a = float(breaks[k])
+        b = float(breaks[k + 1])
+        dt = min(max(t, a), b) - a
+        if dt > 0:
+            H0 += float(nu[k]) * float(dt)
+    return float(H0)
+
+def frailty_risk_shift_table(
+    run_dir: str | Path,
+    *,
+    horizon_days: float = 1825.0,
+) -> pd.DataFrame:
+    """
+    Compute an interpretable frailty-only risk shift table at a given horizon.
+
+    Uses:
+      - model.json via FittedPEPHModel.load(...) for breaks + nu
+      - frailty_table.parquet for zip/u_hat
+
+    The reported risk is the risk implied by frailty alone, holding the
+    subject-level linear predictor at 0.
+
+    Columns returned:
+      zip, u_hat, hazard_multiplier, risk_ref, risk_area, risk_shift
+    """
+    art = discover_run_artifacts(run_dir)
+
+    if art.model_json is None:
+        raise FileNotFoundError(f"model.json not found under: {art.run_dir}")
+    if art.frailty_table is None:
+        raise FileNotFoundError(f"frailty_table.parquet not found under: {art.run_dir}")
+
+    model = FittedPEPHModel.load(str(art.model_json))
+    frailty = pd.read_parquet(art.frailty_table).copy()
+
+    if "u_hat" not in frailty.columns:
+        raise ValueError("frailty_table.parquet must contain a 'u_hat' column")
+    if "zip" not in frailty.columns:
+        raise ValueError("frailty_table.parquet must contain a 'zip' column")
+
+    H0 = _baseline_cumhaz_at_time(
+        breaks=list(map(float, model.breaks)),
+        nu=np.asarray(model.nu, dtype=float),
+        t=float(horizon_days),
+    )
+
+    # Risk with eta=0 (reference)
+    risk_ref = 1.0 - np.exp(-H0)
+
+    u = frailty["u_hat"].to_numpy(dtype=float)
+    hazard_multiplier = np.exp(u)
+    risk_area = 1.0 - np.exp(-hazard_multiplier * H0)
+    risk_shift = risk_area - risk_ref
+
+    out = frailty.copy()
+    out["hazard_multiplier"] = hazard_multiplier
+    out["risk_ref"] = float(risk_ref)
+    out["risk_area"] = risk_area
+    out["risk_shift"] = risk_shift
+    out["horizon_days"] = float(horizon_days)
+
+    # Most interpretable ordering: largest positive shift first
+    out = out.sort_values("risk_shift", ascending=False).reset_index(drop=True)
+    return out

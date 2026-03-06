@@ -10,13 +10,58 @@ from peph.report.discover import discover_run_artifacts
 from peph.report.format import format_metrics_summary, print_df_pretty
 from peph.report.tables import (
     coef_with_hr,
+    frailty_risk_shift_table,
     load_baseline_table,
     load_coef_table,
     load_frailty_table,
     load_metrics,
     top_terms,
 )
+from peph.report.predictions import (
+    load_predictions_table,
+    prediction_diagnostics_table,
+    prediction_horizons_from_df,
+    prediction_summary_table,
+    risk_group_table,
+    top_predicted_risk_table,
+)
 
+def cmd_spatial_risk(args: argparse.Namespace) -> None:
+    df = frailty_risk_shift_table(
+        args.run_dir,
+        horizon_days=float(args.horizon),
+    )
+
+    if args.top is not None:
+        top = int(args.top)
+        head = df.head(top).copy()
+        tail = df.tail(top).copy()
+        head.insert(0, "_rank", range(1, len(head) + 1))
+        tail.insert(0, "_rank", range(len(df) - len(tail) + 1, len(df) + 1))
+        df = pd.concat([head, tail], axis=0)
+
+    cols = [
+        c for c in [
+            "_rank",
+            "zip",
+            "u_hat",
+            "hazard_multiplier",
+            "risk_ref",
+            "risk_area",
+            "risk_shift",
+            "component",
+            "n_train",
+        ]
+        if c in df.columns
+    ]
+    df = df[cols]
+
+    if args.to == "csv":
+        out_dir = _ensure_out_dir(args.out_dir)
+        suffix = int(float(args.horizon))
+        _save_csv(df, out_dir, f"frailty_risk_shift_t{suffix}.csv")
+    else:
+        print_df_pretty(df, max_rows=args.max_rows, max_cols=args.max_cols)
 
 def _ensure_out_dir(out_dir: Optional[str | Path]) -> Path:
     if out_dir is None:
@@ -125,6 +170,77 @@ def cmd_paths(args: argparse.Namespace) -> None:
     else:
         print_df_pretty(df, max_rows=args.max_rows, max_cols=args.max_cols)
 
+def cmd_predictions(args: argparse.Namespace) -> None:
+    art = discover_run_artifacts(args.run_dir)
+    df = load_predictions_table(art)
+
+    horizons = [int(args.horizon)] if args.horizon is not None else prediction_horizons_from_df(df)
+    summary = prediction_summary_table(df, horizons=horizons)
+
+    if args.to == "csv":
+        out_dir = _ensure_out_dir(args.out_dir)
+        _save_csv(summary, out_dir, "prediction_summary.csv")
+
+        if args.top is not None and args.horizon is not None:
+            top_df = top_predicted_risk_table(
+                df,
+                horizon=int(args.horizon),
+                id_col=args.id_col,
+                time_col=args.time_col,
+                event_col=args.event_col,
+                top=args.top,
+            )
+            _save_csv(top_df, out_dir, f"top_predicted_risk_t{int(args.horizon)}.csv")
+    else:
+        print("Prediction summary")
+        print_df_pretty(summary, max_rows=args.max_rows, max_cols=args.max_cols)
+
+        if args.top is not None and args.horizon is not None:
+            print()
+            print(f"Top predicted risks at horizon {int(args.horizon)} days")
+            top_df = top_predicted_risk_table(
+                df,
+                horizon=int(args.horizon),
+                id_col=args.id_col,
+                time_col=args.time_col,
+                event_col=args.event_col,
+                top=args.top,
+            )
+            print_df_pretty(top_df, max_rows=args.max_rows, max_cols=args.max_cols)
+
+
+def cmd_risk_groups(args: argparse.Namespace) -> None:
+    art = discover_run_artifacts(args.run_dir)
+    df = load_predictions_table(art)
+
+    out = risk_group_table(
+        df,
+        horizon=int(args.horizon),
+        n_groups=int(args.n_groups),
+        time_col=args.time_col,
+        event_col=args.event_col,
+    )
+
+    if args.to == "csv":
+        out_dir = _ensure_out_dir(args.out_dir)
+        _save_csv(out, out_dir, f"risk_groups_t{int(args.horizon)}.csv")
+    else:
+        print_df_pretty(out, max_rows=args.max_rows, max_cols=args.max_cols)
+
+
+def cmd_prediction_diagnostics(args: argparse.Namespace) -> None:
+    art = discover_run_artifacts(args.run_dir)
+    df = load_predictions_table(art)
+
+    horizons = prediction_horizons_from_df(df)
+    out = prediction_diagnostics_table(df, horizons=horizons)
+
+    if args.to == "csv":
+        out_dir = _ensure_out_dir(args.out_dir)
+        _save_csv(out, out_dir, "prediction_diagnostics.csv")
+    else:
+        print_df_pretty(out, max_rows=args.max_rows, max_cols=args.max_cols)    
+
 
 def build_report_parser(subparsers: argparse._SubParsersAction) -> None:
     """
@@ -160,6 +276,36 @@ def build_report_parser(subparsers: argparse._SubParsersAction) -> None:
     add_common(px)
     px.add_argument("--top", type=int, default=20, help="Show top/bottom by u_hat (if present).")
     px.set_defaults(func=cmd_spatial)
+
+    pr = sp.add_parser("spatial-risk", help="Print/save frailty-implied risk shift table at a given horizon (default 5 years).")
+    add_common(pr)
+    pr.add_argument("--horizon", type=float, default=1825.0, help="Prediction horizon in days (default 1825).")
+    pr.add_argument("--top", type=int, default=20, help="Show top/bottom by risk shift.")
+    pr.set_defaults(func=cmd_spatial_risk)
+
+        # predictions
+    py = sp.add_parser("predictions", help="Inspect prediction distributions and top predicted risks.")
+    add_common(py)
+    py.add_argument("--horizon", type=int, default=None, help="Optional single horizon for top-risk display.")
+    py.add_argument("--top", type=int, default=20, help="Top N subjects by predicted risk (requires --horizon).")
+    py.add_argument("--id-col", default="id", help="ID column in predictions table.")
+    py.add_argument("--time-col", default="time", help="Observed time column in predictions table.")
+    py.add_argument("--event-col", default="event", help="Event indicator column in predictions table.")
+    py.set_defaults(func=cmd_predictions)
+
+    # risk groups
+    pg = sp.add_parser("risk-groups", help="Risk stratification summary by predicted-risk quantile groups.")
+    add_common(pg)
+    pg.add_argument("--horizon", type=int, default=1825, help="Horizon in days (default 1825).")
+    pg.add_argument("--n-groups", type=int, default=10, help="Number of risk groups (default 10).")
+    pg.add_argument("--time-col", default="time", help="Observed time column in predictions table.")
+    pg.add_argument("--event-col", default="event", help="Event indicator column in predictions table.")
+    pg.set_defaults(func=cmd_risk_groups)
+
+    # prediction diagnostics
+    pdg = sp.add_parser("diagnostics", help="Prediction sanity checks (bounds, monotonicity).")
+    add_common(pdg)
+    pdg.set_defaults(func=cmd_prediction_diagnostics)
 
     pp = sp.add_parser("paths", help="Print/save discovered artifact paths under the run-dir.")
     add_common(pp)
