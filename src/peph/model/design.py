@@ -1,8 +1,7 @@
-# src/peph/model/design.py
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -28,9 +27,23 @@ class DesignInfo:
     categorical_levels_seen: Dict[str, List[str]]
 
 
-# ----------------------------
-# Fixed-effect encoding helpers
-# ----------------------------
+def _validate_unique_covariate_names(
+    *,
+    x_numeric: List[str],
+    x_td_numeric: List[str],
+    x_categorical: List[str],
+) -> None:
+    """
+    Fail if a covariate name is repeated across groups.
+    """
+    all_names = list(x_numeric) + list(x_td_numeric) + list(x_categorical)
+    dupes = sorted({c for c in all_names if all_names.count(c) > 1})
+    if dupes:
+        raise ValueError(
+            "Covariate names must be unique across x_numeric, x_td_numeric, and "
+            f"x_categorical. Duplicates: {dupes}"
+        )
+
 
 def _encode_fixed_effects(
     *,
@@ -38,20 +51,42 @@ def _encode_fixed_effects(
     x_numeric: List[str],
     x_categorical: List[str],
     categorical_reference_levels: Dict[str, str],
+    x_td_numeric: Optional[List[str]] = None,
 ) -> Tuple[np.ndarray, List[str], Dict[str, List[str]]]:
     """
     Encode fixed effects from LONG data.
 
-    Numeric: included as-is in x_numeric order.
-    Categorical: one-hot using sorted levels observed in long_df; exclude reference.
+    Numeric:
+        - x_numeric: baseline numeric covariates carried into long form
+        - x_td_numeric: time-dependent numeric covariates already present in long_df
 
-    Column naming: f"{col}{level}" (e.g. sexM, stageIII)
+    Categorical:
+        One-hot using sorted levels observed in long_df; exclude reference.
+
+    Column naming:
+        f"{col}{level}" for categorical indicators (e.g. sexM, stageIII)
     """
+    if x_td_numeric is None:
+        x_td_numeric = []
+
     n = len(long_df)
+
+    _validate_unique_covariate_names(
+        x_numeric=x_numeric,
+        x_td_numeric=x_td_numeric,
+        x_categorical=x_categorical,
+    )
 
     for c in x_numeric:
         if c not in long_df.columns:
             raise ValueError(f"Numeric covariate column not found in long_df: '{c}'")
+
+    for c in x_td_numeric:
+        if c not in long_df.columns:
+            raise ValueError(
+                f"Time-dependent numeric covariate column not found in long_df: '{c}'"
+            )
+
     for c in x_categorical:
         if c not in long_df.columns:
             raise ValueError(f"Categorical covariate column not found in long_df: '{c}'")
@@ -62,13 +97,16 @@ def _encode_fixed_effects(
     names: List[str] = []
     levels_seen: Dict[str, List[str]] = {}
 
-    # numeric
     if x_numeric:
         X_num = long_df[x_numeric].to_numpy(dtype=float, copy=False)
         blocks.append(X_num)
         names.extend(list(x_numeric))
 
-    # categorical
+    if x_td_numeric:
+        X_td = long_df[x_td_numeric].to_numpy(dtype=float, copy=False)
+        blocks.append(X_td)
+        names.extend(list(x_td_numeric))
+
     for col in x_categorical:
         ref = str(categorical_reference_levels[col])
         vals = long_df[col].astype(str)
@@ -101,32 +139,33 @@ def _encode_fixed_effects_from_wide(
     """
     Encode fixed effects from WIDE data for prediction using levels from training.
 
-    hard_fail_on_unseen=True raises if a categorical contains a value not in
-    categorical_levels_seen[col].
+    Notes
+    -----
+    This path remains baseline-only. Time-dependent covariates such as treated_td
+    are handled in LONG training design and will require a separate prediction path.
     """
     n = len(wide_df)
 
     for c in x_numeric:
         if c not in wide_df.columns:
             raise ValueError(f"Numeric covariate column not found in wide_df: '{c}'")
+
     for c in x_categorical:
         if c not in wide_df.columns:
             raise ValueError(f"Categorical covariate column not found in wide_df: '{c}'")
         if c not in categorical_reference_levels:
             raise ValueError(f"Missing reference level for categorical '{c}'")
         if c not in categorical_levels_seen:
-            raise ValueError(f"Missing categorical_levels_seen for '{c}' (model encoding incomplete)")
+            raise ValueError(f"Missing categorical_levels_seen for '{c}'")
 
     blocks: List[np.ndarray] = []
     names: List[str] = []
 
-    # numeric
     if x_numeric:
         X_num = wide_df[x_numeric].to_numpy(dtype=float, copy=False)
         blocks.append(X_num)
         names.extend(list(x_numeric))
 
-    # categorical using training levels
     for col in x_categorical:
         ref = str(categorical_reference_levels[col])
         train_lvls = list(map(str, categorical_levels_seen[col]))
@@ -150,10 +189,6 @@ def _encode_fixed_effects_from_wide(
     return X, names
 
 
-# ----------------------------
-# Training design (long form)
-# ----------------------------
-
 def build_design_long_train(
     long_df: pd.DataFrame,
     *,
@@ -161,6 +196,7 @@ def build_design_long_train(
     x_categorical: List[str],
     categorical_reference_levels: Dict[str, str],
     K: int,
+    x_td_numeric: Optional[List[str]] = None,
     y_col: str = "event",
     interval_col: str = "k",
     exposure_col: str = "exposure",
@@ -171,6 +207,9 @@ def build_design_long_train(
 
     log(mu_i) = log(exposure_i) + alpha_{k_i} + X_i beta
     """
+    if x_td_numeric is None:
+        x_td_numeric = []
+
     if y_col not in long_df.columns:
         raise ValueError(f"Missing y_col '{y_col}' in long_df")
     if interval_col not in long_df.columns:
@@ -191,19 +230,19 @@ def build_design_long_train(
 
     if np.any(exposure < 0):
         raise ValueError("exposure must be non-negative")
+
     offset = np.log(np.maximum(exposure, float(eps_offset)))
 
-    # baseline interval indicators
     B = np.zeros((n, K), dtype=float)
     B[np.arange(n), k] = 1.0
     baseline_col_names = [f"log_nu[{j}]" for j in range(K)]
 
-    # fixed effects
     X_fixed, x_col_names, levels_seen = _encode_fixed_effects(
         long_df=long_df,
         x_numeric=x_numeric,
         x_categorical=x_categorical,
         categorical_reference_levels=categorical_reference_levels,
+        x_td_numeric=x_td_numeric,
     )
 
     X_full = np.concatenate([B, X_fixed], axis=1)
@@ -218,10 +257,6 @@ def build_design_long_train(
     return y, X_full, offset, info
 
 
-# ----------------------------
-# Prediction design (wide form)
-# ----------------------------
-
 def build_x_wide_for_prediction(
     wide_df: pd.DataFrame,
     *,
@@ -229,14 +264,14 @@ def build_x_wide_for_prediction(
     x_categorical: List[str],
     categorical_reference_levels: Dict[str, str],
     categorical_levels_seen: Dict[str, List[str]],
-    x_col_names: List[str] | None = None,
+    x_col_names: Optional[List[str]] = None,
     hard_fail_on_unseen: bool = True,
-    hard_fail: bool | None = None,
+    hard_fail: Optional[bool] = None,
 ) -> Tuple[np.ndarray, List[str]]:
     """
     Build fixed-effect design matrix for prediction on WIDE data.
 
-    Backward compatible kwargs:
+    Backward-compatible kwargs:
       - hard_fail: alias for hard_fail_on_unseen
       - x_col_names: enforce exact column ordering
     """

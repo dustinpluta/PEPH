@@ -1,7 +1,7 @@
 # src/peph/model/fit.py
 from __future__ import annotations
 
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 import numpy as np
 import statsmodels.api as sm
@@ -24,6 +24,7 @@ def fit_peph(
     n_train_subjects: int,
     covariance: Literal["classical", "cluster_id"] = "classical",
     cluster_col: str = "id",
+    x_td_numeric: Optional[List[str]] = None,
 ) -> FittedPEPHModel:
     """
     Fit piecewise exponential proportional hazards via Poisson GLM with offset.
@@ -31,11 +32,19 @@ def fit_peph(
     covariance:
       - "classical": model-based covariance (default)
       - "cluster_id": sandwich covariance clustered by subject id on long-form rows
+
+    x_td_numeric:
+      Optional long-form time-dependent numeric covariates already present in
+      long_train, e.g. ["treated_td"].
     """
+    if x_td_numeric is None:
+        x_td_numeric = []
+
     K = len(breaks) - 1
     y, X, offset, info = build_design_long_train(
         long_train,
         x_numeric=x_numeric,
+        x_td_numeric=x_td_numeric,
         x_categorical=x_categorical,
         categorical_reference_levels=categorical_reference_levels,
         K=K,
@@ -67,6 +76,7 @@ def fit_peph(
 
     enc = FeatureEncoding(
         x_numeric=list(x_numeric),
+        x_td_numeric=list(x_td_numeric),
         x_categorical=list(x_categorical),
         categorical_reference_levels=dict(categorical_reference_levels),
         categorical_levels_seen=info.categorical_levels_seen,

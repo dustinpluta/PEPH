@@ -161,8 +161,8 @@ def _morans_I(x: np.ndarray, W_csr: Any) -> Dict[str, float]:
     b2 = float(n * np.sum(x4) / (s2**2)) if s2 > 0 else 0.0
 
     num_var = (
-        n * ((n**2 - 3*n + 3) * S1 - n * S2 + 3 * (S0**2))
-        - b2 * ((n**2 - n) * S1 - 2*n * S2 + 6 * (S0**2))
+        n * ((n**2 - 3 * n + 3) * S1 - n * S2 + 3 * (S0**2))
+        - b2 * ((n**2 - n) * S1 - 2 * n * S2 + 6 * (S0**2))
     )
     den_var = (n - 1) * (n - 2) * (n - 3) * (S0**2)
     varI = float(num_var / den_var) - EI**2
@@ -264,12 +264,36 @@ def run_pipeline(cfg: RunConfig) -> Path:
     # Read wide data
     wide = read_table(cfg.data.path, cfg.data.format)
 
-    # Validate columns exist
+    # ---------------------------------
+    # Resolve TTT / TD-covariate config
+    # ---------------------------------
+    x_td_numeric = list(getattr(cfg.data_schema, "x_td_numeric", []) or [])
+
+    ttt_enabled = bool(getattr(cfg, "ttt", None) is not None and getattr(cfg.ttt, "enabled", False))
+    cut_times_col: Optional[str] = None
+    td_treatment_col: Optional[str] = None
+    treated_td_col: Optional[str] = None
+
+    if ttt_enabled:
+        cut_times_col = str(cfg.ttt.treatment_time_col)
+        td_treatment_col = str(cfg.ttt.treatment_time_col)
+        treated_td_col = str(cfg.ttt.treated_td_col)
+
+        if treated_td_col not in x_td_numeric:
+            raise ValueError(
+                "TTT is enabled but data_schema.x_td_numeric does not include "
+                f"treated_td_col='{treated_td_col}'."
+            )
+
+    # Validate columns exist in WIDE data
     required = (
         [cfg.data_schema.id_col, cfg.data_schema.time_col, cfg.data_schema.event_col]
         + cfg.data_schema.x_numeric
         + cfg.data_schema.x_categorical
     )
+
+    if cut_times_col is not None:
+        required.append(cut_times_col)
 
     # If spatial is enabled, area_col must exist in WIDE and must be carried to LONG.
     if cfg.spatial is not None:
@@ -310,6 +334,9 @@ def run_pipeline(cfg: RunConfig) -> Path:
         event_col=cfg.data_schema.event_col,
         x_cols=x_cols_all,
         breaks=cfg.time.breaks,
+        cut_times_col=cut_times_col,
+        td_treatment_col=td_treatment_col,
+        treated_td_col=(treated_td_col if treated_td_col is not None else "treated_td"),
     )
     long_test = expand_long(
         test_wide,
@@ -318,6 +345,9 @@ def run_pipeline(cfg: RunConfig) -> Path:
         event_col=cfg.data_schema.event_col,
         x_cols=x_cols_all,
         breaks=cfg.time.breaks,
+        cut_times_col=cut_times_col,
+        td_treatment_col=td_treatment_col,
+        treated_td_col=(treated_td_col if treated_td_col is not None else "treated_td"),
     )
 
     write_table(long_train, out_dir / "long_train.parquet")
@@ -330,6 +360,7 @@ def run_pipeline(cfg: RunConfig) -> Path:
         train_wide=train_wide,
         breaks=cfg.time.breaks,
         x_numeric=cfg.data_schema.x_numeric,
+        x_td_numeric=x_td_numeric,
         x_categorical=cfg.data_schema.x_categorical,
         categorical_reference_levels=cfg.data_schema.categorical_reference_levels,
         n_train_subjects=int(train_wide[cfg.data_schema.id_col].nunique()),
@@ -363,6 +394,16 @@ def run_pipeline(cfg: RunConfig) -> Path:
         train_wide_event=train_wide[cfg.data_schema.event_col].to_numpy(dtype=int),
     )
     write_json(out_dir / "inference.json", inf)
+
+    # ---------------------------------
+    # Prediction: not yet supported for TD covariates
+    # ---------------------------------
+    if x_td_numeric:
+        raise NotImplementedError(
+            "Pipeline fitting with long-form time-dependent covariates is enabled, "
+            f"but prediction is not yet implemented for x_td_numeric={x_td_numeric}. "
+            "Current predict.py only supports baseline wide-data covariates."
+        )
 
     # Predict on test
     horizons = list(map(float, cfg.predict.horizons_days or []))

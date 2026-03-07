@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -13,38 +13,28 @@ class FeatureEncoding:
     x_numeric: List[str]
     x_categorical: List[str]
     categorical_reference_levels: Dict[str, str]
-    categorical_levels_seen: Dict[str, List[str]]  # sorted unique levels observed in training
-    x_expanded_cols: List[str]  # expanded feature names (numeric + one-hot), excluding baseline interval cols
+    categorical_levels_seen: Dict[str, List[str]]
+    x_expanded_cols: List[str]
+    x_td_numeric: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class FittedPEPHModel:
-    # time
     breaks: List[float]
-    interval_convention: str  # "[a,b)"
-
-    # covariates
+    interval_convention: str
     encoding: FeatureEncoding
-
-    # parameters
-    baseline_col_names: List[str]           # length K
-    x_col_names: List[str]                  # expanded X cols (numeric + one-hot)
-    param_names: List[str]                  # baseline + X (full)
-    params: List[float]                     # length K + p
-    cov: List[List[float]]                  # (K+p) x (K+p)
-
-    # derived baseline hazards per interval
-    nu: List[float]                         # exp(alpha_k)
-
-    # fit metadata
+    baseline_col_names: List[str]
+    x_col_names: List[str]
+    param_names: List[str]
+    params: List[float]
+    cov: List[List[float]]
+    nu: List[float]
     fit_backend: str
     n_train_subjects: int
     n_train_long_rows: int
     converged: Optional[bool] = None
     aic: Optional[float] = None
     deviance: Optional[float] = None
-
-    # NEW
     llf: Optional[float] = None
 
     def to_json_dict(self) -> Dict[str, Any]:
@@ -52,10 +42,10 @@ class FittedPEPHModel:
 
     @classmethod
     def from_json_dict(cls, d: Dict[str, Any]) -> "FittedPEPHModel":
-        enc = FeatureEncoding(**d["encoding"])
         d2 = dict(d)
-        d2["encoding"] = enc
-        # Backward compatibility: if llf absent in older JSON
+        enc_dict = dict(d2["encoding"])
+        enc_dict.setdefault("x_td_numeric", [])
+        d2["encoding"] = FeatureEncoding(**enc_dict)
         d2.setdefault("llf", None)
         return cls(**d2)
 

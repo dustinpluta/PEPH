@@ -19,6 +19,10 @@ class SchemaConfig(BaseModel):
     x_numeric: List[str]
     x_categorical: List[str]
 
+    # Long-form time-dependent numeric covariates created during expansion,
+    # e.g. ["treated_td"] for time-to-treatment modeling.
+    x_td_numeric: List[str] = []
+
     categorical_reference_levels: Dict[str, str]
 
 
@@ -27,6 +31,27 @@ class TimeConfig(BaseModel):
     Time scale: days. Breaks define [a,b) intervals.
     """
     breaks: List[float]
+
+
+class TTTConfig(BaseModel):
+    """
+    Optional time-to-treatment configuration.
+
+    treatment_time_col:
+        Wide-data column containing time from diagnosis to treatment.
+        Missing means treatment not observed during follow-up.
+
+    treated_td_col:
+        Name of the long-form 0/1 indicator created during long expansion,
+        where treated_td = 1[t0 >= treatment_time].
+
+    enabled:
+        Master switch for TTT plumbing in the pipeline. Keeping this explicit
+        makes the config easier to reason about and keeps old runs unchanged.
+    """
+    enabled: bool = False
+    treatment_time_col: str = "treatment_time"
+    treated_td_col: str = "treated_td"
 
 
 class SpatialConfig(BaseModel):
@@ -111,6 +136,9 @@ class RunConfig(BaseModel):
 
     time: TimeConfig
     fit: FitConfig
+
+    # Optional time-to-treatment modeling block
+    ttt: Optional[TTTConfig] = None
 
     spatial: Optional[SpatialConfig] = None
 
