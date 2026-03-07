@@ -25,6 +25,13 @@ from peph.model.predict import (
 )
 from peph.plots.calibration import plot_calibration_risk_by_quantile
 from peph.plots.diagnostics import plot_cox_snell
+from peph.report.ttt import (
+    summarize_treated_td_effect,
+    summarize_treatment_long,
+    summarize_treatment_wide,
+    summarize_treatment_time_distribution,
+    plot_treatment_time_histogram,
+)
 from peph.spatial.graph import build_graph_from_edge_list
 from peph.utils.json import write_json
 
@@ -396,17 +403,86 @@ def run_pipeline(cfg: RunConfig) -> Path:
     write_json(out_dir / "inference.json", inf)
 
     # ---------------------------------
+    # TTT reporting artifacts (train set)
+    # ---------------------------------
+    if ttt_enabled and treated_td_col is not None:
+        if treated_td_col not in long_train.columns:
+            raise RuntimeError(
+                f"TTT is enabled but treated_td_col='{treated_td_col}' was not found in long_train."
+            )
+
+        stage_col = "stage" if "stage" in train_wide.columns else None
+
+        ttt_wide = summarize_treatment_wide(
+            train_wide,
+            treatment_time_col=cut_times_col,
+            stage_col=stage_col,
+        )
+        
+        ttt_time_dist = summarize_treatment_time_distribution(
+            train_wide,
+            treatment_time_col=cut_times_col,
+        )
+
+        plot_treatment_time_histogram(
+            train_wide,
+            treatment_time_col=cut_times_col,
+            out_path=out_dir / "plots" / "treatment_time_histogram.png",
+        )
+
+        ttt_long = summarize_treatment_long(
+            long_train,
+            treated_td_col=treated_td_col,
+            exposure_col="exposure",
+            event_col="event",
+            stage_col=stage_col,
+        )
+
+        ttt_effect = summarize_treated_td_effect(
+            fitted,
+            treated_td_col=treated_td_col,
+            alpha=0.05,
+        )
+
+        ttt_summary = {
+            "treatment_process": ttt_wide,
+            "treatment_time_distribution": ttt_time_dist.to_dict(orient="records"),
+            "long_risk_time": ttt_long,
+            "treatment_effect": ttt_effect,
+        }
+        write_json(out_dir / "ttt_summary.json", ttt_summary)
+
+        write_table(
+            ttt_time_dist,
+            out_dir / "treatment_time_distribution.parquet",
+        )
+
+        if "by_stage" in ttt_wide:
+            write_table(
+                pd.DataFrame(ttt_wide["by_stage"]),
+                out_dir / "ttt_wide_by_stage.parquet",
+            )
+
+        if "by_stage" in ttt_long:
+            write_table(
+                pd.DataFrame(ttt_long["by_stage"]),
+                out_dir / "ttt_long_by_stage.parquet",
+            )
+
+    # Predict on test
+    horizons = list(map(float, cfg.predict.horizons_days or []))
+
+    # ---------------------------------
     # Prediction: not yet supported for TD covariates
     # ---------------------------------
     if x_td_numeric:
+        if not horizons:
+            return out_dir
         raise NotImplementedError(
             "Pipeline fitting with long-form time-dependent covariates is enabled, "
             f"but prediction is not yet implemented for x_td_numeric={x_td_numeric}. "
             "Current predict.py only supports baseline wide-data covariates."
         )
-
-    # Predict on test
-    horizons = list(map(float, cfg.predict.horizons_days or []))
 
     # Frailty-aware predictions:
     # - "auto": Leroux -> conditional, PH -> none
