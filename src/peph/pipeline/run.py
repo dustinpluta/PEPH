@@ -472,44 +472,48 @@ def run_pipeline(cfg: RunConfig) -> Path:
     # Predict on test
     horizons = list(map(float, cfg.predict.horizons_days or []))
 
-    # ---------------------------------
-    # Prediction: not yet supported for TD covariates
-    # ---------------------------------
-    if x_td_numeric:
-        if not horizons:
-            return out_dir
-        raise NotImplementedError(
-            "Pipeline fitting with long-form time-dependent covariates is enabled, "
-            f"but prediction is not yet implemented for x_td_numeric={x_td_numeric}. "
-            "Current predict.py only supports baseline wide-data covariates."
-        )
+    # Predict on test
+    horizons = list(map(float, cfg.predict.horizons_days or []))
+
+    # For reporting-only TTT runs with no prediction horizons, stop here.
+    if x_td_numeric and not horizons:
+        return out_dir
 
     # Frailty-aware predictions:
     # - "auto": Leroux -> conditional, PH -> none
     frailty_mode = getattr(cfg.predict, "frailty_mode", "auto")
+    treatment_time_col_for_prediction = cut_times_col if ttt_enabled else None
 
-    eta = predict_linear_predictor(
-        test_wide,
-        fitted,
-        frailty_mode=frailty_mode,
-        hard_fail=True,
-        allow_unseen_area=(cfg.spatial.allow_unseen_area if cfg.spatial else False),
-    )
+    eta = None
+    if not x_td_numeric:
+        eta = predict_linear_predictor(
+            test_wide,
+            fitted,
+            frailty_mode=frailty_mode,
+            hard_fail=True,
+            allow_unseen_area=(cfg.spatial.allow_unseen_area if cfg.spatial else False),
+        )
 
     pred_df = pd.DataFrame(
         {
             cfg.data_schema.id_col: test_wide[cfg.data_schema.id_col].to_numpy(),
             cfg.data_schema.time_col: test_wide[cfg.data_schema.time_col].to_numpy(dtype=float),
             cfg.data_schema.event_col: test_wide[cfg.data_schema.event_col].to_numpy(dtype=int),
-            "eta": eta.astype(float),
         }
     )
+
+    if eta is not None:
+        pred_df["eta"] = eta.astype(float)
+
+    if eta is not None:
+        pred_df["eta"] = eta.astype(float)
 
     if horizons:
         S = predict_survival(
             test_wide,
             fitted,
             times=horizons,
+            treatment_time_col=treatment_time_col_for_prediction,
             frailty_mode=frailty_mode,
             hard_fail=True,
             allow_unseen_area=(cfg.spatial.allow_unseen_area if cfg.spatial else False),
@@ -518,6 +522,7 @@ def run_pipeline(cfg: RunConfig) -> Path:
             test_wide,
             fitted,
             times=horizons,
+            treatment_time_col=treatment_time_col_for_prediction,
             frailty_mode=frailty_mode,
             hard_fail=True,
             allow_unseen_area=(cfg.spatial.allow_unseen_area if cfg.spatial else False),
@@ -526,6 +531,7 @@ def run_pipeline(cfg: RunConfig) -> Path:
             test_wide,
             fitted,
             times=horizons,
+            treatment_time_col=treatment_time_col_for_prediction,
             frailty_mode=frailty_mode,
             hard_fail=True,
             allow_unseen_area=(cfg.spatial.allow_unseen_area if cfg.spatial else False),
@@ -545,12 +551,13 @@ def run_pipeline(cfg: RunConfig) -> Path:
     metrics: Dict[str, Any] = {}
     time = pred_df[cfg.data_schema.time_col].to_numpy(dtype=float)
     event = pred_df[cfg.data_schema.event_col].to_numpy(dtype=int)
-    score = pred_df["eta"].to_numpy(dtype=float)
 
-    if cfg.metrics.discrimination.get("c_index", True):
+    score = pred_df["eta"].to_numpy(dtype=float) if "eta" in pred_df.columns else None
+
+    if score is not None and cfg.metrics.discrimination.get("c_index", True):
         metrics["c_index"] = c_index_harrell(time, event, score)
 
-    if cfg.metrics.discrimination.get("time_dependent_auc", True) and horizons:
+    if score is not None and cfg.metrics.discrimination.get("time_dependent_auc", True) and horizons:
         metrics.update(time_dependent_auc_ipcw(time, event, score, horizons))
 
     # Calibration + Brier by horizon (requires predicted risk columns)

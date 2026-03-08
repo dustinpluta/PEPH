@@ -58,6 +58,18 @@ def _baseline_cumhaz_at_times(breaks: list[float], nu: np.ndarray, times: np.nda
     return H0
 
 
+def _has_supported_treated_td(model: FittedPEPHModel, treated_td_col: str) -> bool:
+    """
+    Return True iff the fitted model contains the supported TD covariate
+    `treated_td_col`.
+
+    PR-C supports only a single treated_td-style switch covariate.
+    """
+    enc = model.encoding
+    x_td_numeric = list(getattr(enc, "x_td_numeric", []) or [])
+    return treated_td_col in x_td_numeric
+
+
 def predict_linear_predictor(
     a: object,
     b: object,
@@ -69,6 +81,11 @@ def predict_linear_predictor(
     """
     Return eta_i = x_i^T beta (+ u_zip if enabled).
 
+    For models with treated_td in x_td_numeric, this returns the baseline
+    linear predictor excluding the time-dependent treatment effect only if the
+    design matrix itself contains no TD columns. Otherwise, standard wide
+    prediction is not well-defined and this function raises.
+
     Backward compatible:
       - predict_linear_predictor(wide_df, model, ...)
       - predict_linear_predictor(model, wide_df, ...)
@@ -76,6 +93,14 @@ def predict_linear_predictor(
     wide_df, model = _coerce_args_model_wide(a, b)
 
     enc = model.encoding
+    x_td_numeric = list(getattr(enc, "x_td_numeric", []) or [])
+    if x_td_numeric:
+        raise NotImplementedError(
+            "predict_linear_predictor is not defined for models with time-dependent "
+            f"covariates x_td_numeric={x_td_numeric}. Use predict_cumhaz / "
+            "predict_survival / predict_risk with treatment_time_col for treated_td models."
+        )
+
     K = len(model.baseline_col_names)
     params = np.asarray(model.params, dtype=float)
     beta = params[K:]
@@ -108,15 +133,35 @@ def predict_cumhaz(
     frailty_mode: FrailtyMode = "auto",
     allow_unseen_area: Optional[bool] = None,
     hard_fail: bool = True,
+    treatment_time_col: Optional[str] = None,
+    treated_td_col: str = "treated_td",
 ) -> np.ndarray:
     """
     Predict cumulative hazard at given times.
+
+    For models with treated_td in x_td_numeric, dispatches to the TD-aware
+    prediction path.
 
     Backward compatible:
       - predict_cumhaz(wide_df, model, ...)
       - predict_cumhaz(model, wide_df, ...)
     """
     wide_df, model = _coerce_args_model_wide(a, b)
+
+    if _has_supported_treated_td(model, treated_td_col):
+        from peph.model.predict_td import predict_cumhaz_treated_td
+
+        tt_col = treatment_time_col or "treatment_time"
+        return predict_cumhaz_treated_td(
+            wide_df,
+            model,
+            times=times,
+            treatment_time_col=tt_col,
+            treated_td_col=treated_td_col,
+            frailty_mode=frailty_mode,
+            allow_unseen_area=allow_unseen_area,
+            hard_fail=hard_fail,
+        )
 
     t = np.asarray(list(times), dtype=float)
     eta = predict_linear_predictor(
@@ -142,15 +187,35 @@ def predict_survival(
     frailty_mode: FrailtyMode = "auto",
     allow_unseen_area: Optional[bool] = None,
     hard_fail: bool = True,
+    treatment_time_col: Optional[str] = None,
+    treated_td_col: str = "treated_td",
 ) -> np.ndarray:
     """
     Survival S(t) = exp(-cumhaz(t)).
+
+    For models with treated_td in x_td_numeric, dispatches to the TD-aware
+    prediction path.
 
     Backward compatible:
       - predict_survival(wide_df, model, ...)
       - predict_survival(model, wide_df, ...)
     """
     wide_df, model = _coerce_args_model_wide(a, b)
+
+    if _has_supported_treated_td(model, treated_td_col):
+        from peph.model.predict_td import predict_survival_treated_td
+
+        tt_col = treatment_time_col or "treatment_time"
+        return predict_survival_treated_td(
+            wide_df,
+            model,
+            times=times,
+            treatment_time_col=tt_col,
+            treated_td_col=treated_td_col,
+            frailty_mode=frailty_mode,
+            allow_unseen_area=allow_unseen_area,
+            hard_fail=hard_fail,
+        )
 
     ch = predict_cumhaz(
         wide_df,
@@ -171,15 +236,35 @@ def predict_risk(
     frailty_mode: FrailtyMode = "auto",
     allow_unseen_area: Optional[bool] = None,
     hard_fail: bool = True,
+    treatment_time_col: Optional[str] = None,
+    treated_td_col: str = "treated_td",
 ) -> np.ndarray:
     """
     Risk(t) = 1 - S(t).
+
+    For models with treated_td in x_td_numeric, dispatches to the TD-aware
+    prediction path.
 
     Backward compatible:
       - predict_risk(wide_df, model, ...)
       - predict_risk(model, wide_df, ...)
     """
     wide_df, model = _coerce_args_model_wide(a, b)
+
+    if _has_supported_treated_td(model, treated_td_col):
+        from peph.model.predict_td import predict_risk_treated_td
+
+        tt_col = treatment_time_col or "treatment_time"
+        return predict_risk_treated_td(
+            wide_df,
+            model,
+            times=times,
+            treatment_time_col=tt_col,
+            treated_td_col=treated_td_col,
+            frailty_mode=frailty_mode,
+            allow_unseen_area=allow_unseen_area,
+            hard_fail=hard_fail,
+        )
 
     S = predict_survival(
         wide_df,
