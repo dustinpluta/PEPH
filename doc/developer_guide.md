@@ -325,6 +325,107 @@ Predictions are stored under:
 
     predictions/
 
+## Time-to-Treatment Prediction Semantics
+
+PR-C adds prediction support for models that include the time-dependent treatment indicator `treated_td`.
+
+### Supported prediction mode
+
+Current TTT prediction uses each subject’s **observed treatment history** from the wide data.
+
+For a subject with treatment time `treatment_time`:
+
+- `treated_td(t) = 0` for `t < treatment_time`
+- `treated_td(t) = 1` for `t >= treatment_time`
+
+If `treatment_time` is missing, the subject is treated as **never treated during predicted follow-up**.
+
+Prediction therefore integrates the piecewise exponential hazard across two phases when treatment occurs before the prediction horizon:
+
+1. untreated phase before treatment
+2. treated phase after treatment
+
+For a fitted model of the form
+
+\[
+h_i(t) = h_0(t)\exp\{x_i^\top\beta + \gamma \, treated_i(t) + u_{zip(i)}\},
+\]
+
+the cumulative hazard used in prediction is
+
+\[
+H_i(t)
+=
+e^{\eta_{0i}} H_0(\min(t, s_i))
++
+e^{\eta_{0i}+\gamma}\max\{H_0(t)-H_0(s_i), 0\},
+\]
+
+where:
+
+- \( s_i \) is the subject-specific treatment time
+- \( \eta_{0i} \) is the baseline linear predictor excluding `treated_td`
+- \( u_{zip(i)} \) is the optional Leroux frailty contribution
+
+Survival and risk are then computed as usual:
+
+\[
+S_i(t) = \exp(-H_i(t)), \qquad R_i(t) = 1 - S_i(t).
+\]
+
+### Important interpretation
+
+These predictions are **observed-history predictions**, not counterfactual treatment-policy predictions.
+
+That means:
+
+- if a subject was observed to receive treatment at day 80, the prediction uses a hazard switch at day 80
+- if a subject never had observed treatment, prediction uses untreated hazard throughout follow-up
+- the pipeline does **not** currently alter or simulate treatment timing at prediction time
+
+### Current API behavior
+
+For models containing `treated_td` in `x_td_numeric`:
+
+- `predict_cumhaz()` supports TTT-aware prediction
+- `predict_survival()` supports TTT-aware prediction
+- `predict_risk()` supports TTT-aware prediction
+
+These functions require access to the treatment-time column in the wide prediction data.
+
+`predict_linear_predictor()` is **not defined** for TTT models and intentionally raises an error. A single static linear predictor is not well-defined when the covariate path changes over time.
+
+### Pipeline behavior
+
+For TTT-enabled runs with nonempty prediction horizons, the pipeline writes standard prediction artifacts, including:
+
+- `predictions/test_predictions.parquet`
+- horizon-specific columns such as:
+  - `surv_t365`
+  - `risk_t365`
+  - `cumhaz_t365`
+
+For TTT-enabled models, the predictions artifact does **not** currently include an `eta` column.
+
+### What is not yet supported
+
+PR-C does not yet implement counterfactual prediction modes such as:
+
+- never-treated prediction
+- treatment-at-time-\( s \) prediction
+- user-specified treatment schedules
+
+Those are planned for a later PR.
+
+### Practical implication
+
+Current TTT prediction answers the question:
+
+> Given the fitted model and the subject’s observed treatment time, what are predicted survival, risk, and cumulative hazard at the requested horizons?
+
+It does **not** yet answer:
+
+> What would predicted survival have been if this subject had been treated earlier, later, or never?
 ------------------------------------------------------------
 
 # 8. Metrics and Diagnostics

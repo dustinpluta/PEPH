@@ -1,0 +1,94 @@
+run_name: ga_spatial_ttt_cli
+
+data:
+  path: data/ga_spatial_ttt_dataset.csv
+  format: csv
+
+output:
+  root_dir: data/dev/ga_spatial_ttt_cli
+
+data_schema:
+  id_col: id
+  time_col: time
+  event_col: event
+
+  x_numeric:
+    - age_per10_centered
+    - cci
+    - tumor_size_log
+    - ses
+
+  x_categorical:
+    - sex
+    - stage
+
+  x_td_numeric:
+    - treated_td
+
+  categorical_reference_levels:
+    sex: F
+    stage: I
+
+time:
+  breaks:
+    - 0.0
+    - 30.0
+    - 90.0
+    - 180.0
+    - 365.0
+    - 730.0
+    - 1825.0
+
+fit:
+  backend: map_leroux
+  max_iter: 200
+  tol: 1.0e-8
+  covariance: classical
+
+  leroux_max_iter: 200
+  leroux_ftol: 1.0e-6
+  rho_clip: 1.0e-6
+  q_jitter: 1.0e-8
+
+  prior_logtau_sd: 10.0
+  prior_rho_a: 1.0
+  prior_rho_b: 1.0
+
+ttt:
+  enabled: true
+  treatment_time_col: treatment_time
+  treated_td_col: treated_td
+
+spatial:
+  area_col: zip
+  zips_path: data/zips.csv
+  edges_path: data/zip_adjacency.csv
+  edges_u_col: zip_i
+  edges_v_col: zip_j
+  allow_unseen_area: false
+
+split:
+  test_size: 0.25
+  seed: 1
+
+predict:
+  horizons_days:
+    - 365.0
+    - 730.0
+    - 1825.0
+  frailty_mode: auto
+
+metrics:
+  discrimination:
+    c_index: false
+    time_dependent_auc: false
+  calibration:
+    brier_score: true
+    calibration_in_the_large: true
+    calibration_slope: true
+  residuals:
+    cox_snell: false
+
+plots:
+  cox_snell: false
+  calibration_risk: true
