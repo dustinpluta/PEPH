@@ -135,6 +135,9 @@ def predict_cumhaz(
     hard_fail: bool = True,
     treatment_time_col: Optional[str] = None,
     treated_td_col: str = "treated_td",
+    counterfactual_mode: str = "observed",
+    fixed_treatment_time: Optional[float] = None,
+    delay_days: Optional[float] = None,
 ) -> np.ndarray:
     """
     Predict cumulative hazard at given times.
@@ -161,6 +164,9 @@ def predict_cumhaz(
             frailty_mode=frailty_mode,
             allow_unseen_area=allow_unseen_area,
             hard_fail=hard_fail,
+            counterfactual_mode=counterfactual_mode,
+            fixed_treatment_time=fixed_treatment_time,
+            delay_days=delay_days,
         )
 
     t = np.asarray(list(times), dtype=float)
@@ -189,6 +195,9 @@ def predict_survival(
     hard_fail: bool = True,
     treatment_time_col: Optional[str] = None,
     treated_td_col: str = "treated_td",
+    counterfactual_mode: str = "observed",
+    fixed_treatment_time: Optional[float] = None,
+    delay_days: Optional[float] = None,
 ) -> np.ndarray:
     """
     Survival S(t) = exp(-cumhaz(t)).
@@ -215,6 +224,9 @@ def predict_survival(
             frailty_mode=frailty_mode,
             allow_unseen_area=allow_unseen_area,
             hard_fail=hard_fail,
+            counterfactual_mode=counterfactual_mode,
+            fixed_treatment_time=fixed_treatment_time,
+            delay_days=delay_days,
         )
 
     ch = predict_cumhaz(
@@ -238,6 +250,9 @@ def predict_risk(
     hard_fail: bool = True,
     treatment_time_col: Optional[str] = None,
     treated_td_col: str = "treated_td",
+    counterfactual_mode: str = "observed",
+    fixed_treatment_time: Optional[float] = None,
+    delay_days: Optional[float] = None,
 ) -> np.ndarray:
     """
     Risk(t) = 1 - S(t).
@@ -264,6 +279,9 @@ def predict_risk(
             frailty_mode=frailty_mode,
             allow_unseen_area=allow_unseen_area,
             hard_fail=hard_fail,
+            counterfactual_mode=counterfactual_mode,
+            fixed_treatment_time=fixed_treatment_time,
+            delay_days=delay_days,
         )
 
     S = predict_survival(
