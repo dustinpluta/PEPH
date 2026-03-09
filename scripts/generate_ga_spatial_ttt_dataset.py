@@ -48,7 +48,7 @@ def main() -> None:
         rho_true=0.85,
         admin_censor=float(breaks[-1]),
         random_censor_rate=0.00015,
-        max_treatment_time=365.0,
+        max_treatment_time=90.0,
         seed=123,
         return_latent_truth=False,
     )
@@ -66,10 +66,10 @@ def main() -> None:
         "nu": nu.tolist(),
         "beta": beta,
         "gamma_treated": gamma_treated,
-        "tau_true": 3.0,
-        "rho_true": 0.75,
-        "random_censor_rate": 0.015,
-        "seed": 145,
+        "tau_true": 1.0,
+        "rho_true": 0.85,
+        "random_censor_rate": 0.00015,
+        "seed": 123,
     }
 
     with open(meta_path, "w", encoding="utf-8") as f:
