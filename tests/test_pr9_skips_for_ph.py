@@ -18,15 +18,13 @@ def test_pr9_spatial_artifacts_skipped_for_ph_backend(tmp_path: Path) -> None:
     cfg = load_run_config(
         cfg_path,
         overrides={
-            "output.root_dir": tmp_path.as_posix(),
-            # Shallow override: replace whole fit block with schema-compliant values
+            "output": {"root_dir": tmp_path.as_posix()},
             "fit": {
                 "backend": "statsmodels_glm_poisson",
                 "covariance": "classical",
-                # The remaining fields may be required by the FitConfig schema even if unused.
                 "leroux_max_iter": 5,
                 "leroux_ftol": 1e-6,
-                "rho_clip": 0.999,      # schema expects float
+                "rho_clip": 0.999,
                 "q_jitter": 1e-6,
                 "prior_logtau_sd": 1.0,
                 "prior_rho_a": 1.5,
@@ -36,6 +34,8 @@ def test_pr9_spatial_artifacts_skipped_for_ph_backend(tmp_path: Path) -> None:
         },
     )
 
+    assert cfg.spatial is None
+    assert cfg.fit.backend == "statsmodels_glm_poisson"
     out_dir = run_pipeline(cfg)
     assert out_dir.exists()
 
