@@ -1,0 +1,3 @@
+"""
+Treatment-time modeling subpackage.
+"""
