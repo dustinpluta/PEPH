@@ -65,7 +65,7 @@ def _expanded_column_names(
     categorical_reference_levels: dict[str, str],
     categorical_levels_seen: dict[str, list[str]],
 ) -> list[str]:
-    cols: list[str] = list(x_numeric)
+    cols: list[str] = ["Intercept"] + list(x_numeric)
 
     for c in x_categorical:
         ref = str(categorical_reference_levels[c])
@@ -114,6 +114,8 @@ def build_x_treatment_fit(
     )
 
     X = pd.DataFrame(index=wide_df.index)
+
+    X["Intercept"] = 1.0
 
     for c in x_numeric:
         X[c] = pd.to_numeric(wide_df[c], errors="raise").astype(float)
@@ -174,6 +176,8 @@ def build_x_treatment_prediction(
 
     X = pd.DataFrame(index=wide_df.index)
 
+    X["Intercept"] = 1.0
+
     for c in x_numeric:
         X[c] = pd.to_numeric(wide_df[c], errors="raise").astype(float)
 
@@ -198,7 +202,6 @@ def build_x_treatment_prediction(
                 continue
             X[f"{c}{lvl}"] = (vals == lvl).astype(float)
 
-    # Ensure all expected columns exist, in the fitted order
     for c in x_col_names:
         if c not in X.columns:
             X[c] = 0.0

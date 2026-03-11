@@ -22,7 +22,8 @@ def _lognormal_aft_negloglik_and_grad(
     event: np.ndarray,
 ) -> tuple[float, np.ndarray]:
     """
-    Negative log-likelihood and gradient for log-normal AFT with right censoring.
+    Negative log-likelihood and gradient for a log-normal AFT model with
+    right censoring.
 
     Model
     -----
@@ -41,12 +42,9 @@ def _lognormal_aft_negloglik_and_grad(
     mu = X @ beta
     z = (y - mu) / sigma
 
-    # observed contribution: log f(t)
-    # censored contribution: log S(t) = log(1 - Phi(z))
     obs = event == 1
     cen = ~obs
 
-    # numerical stabilizers
     Phi = _norm_cdf(z)
     Phi = np.clip(Phi, 1e-12, 1.0 - 1e-12)
 
@@ -60,8 +58,6 @@ def _lognormal_aft_negloglik_and_grad(
 
     nll = -float(np.sum(log_pdf[obs]) + np.sum(log_surv[cen]))
 
-    # gradient
-    # standard normal pdf
     phi = np.exp(-0.5 * z**2) / np.sqrt(2.0 * np.pi)
 
     grad_beta = np.zeros(p, dtype=float)
@@ -71,7 +67,7 @@ def _lognormal_aft_negloglik_and_grad(
         z_obs = z[obs]
         X_obs = X[obs]
 
-        # d log f / d mu = z / sigma
+        # d log f / d beta = -(d log f / d mu) X, with d log f / d mu = z / sigma
         grad_beta += -np.sum((z_obs[:, None] / sigma) * X_obs, axis=0)
 
         # d log f / d log_sigma = -1 + z^2
@@ -86,10 +82,10 @@ def _lognormal_aft_negloglik_and_grad(
 
         mills = phi_cen / surv_cen
 
-        # d log S / d mu = phi(z) / (sigma * S(z))
+        # d log S / d mu = - d log S / d beta / X = phi / (sigma * S)
         grad_beta += -np.sum((mills[:, None] / sigma) * X_cen, axis=0)
 
-        # d log S / d log_sigma = z * phi(z) / S(z)
+        # d log S / d log_sigma = z * phi / S
         grad_log_sigma += -np.sum(z_cen * mills)
 
     grad = np.concatenate([grad_beta, np.array([grad_log_sigma])])
@@ -102,7 +98,7 @@ def _initial_theta(
     event: np.ndarray,
 ) -> np.ndarray:
     """
-    Build a stable initializer from uncensored log-times if available,
+    Construct a stable initializer from uncensored log-times if possible,
     otherwise from all observed times.
     """
     p = X.shape[1]
@@ -115,10 +111,14 @@ def _initial_theta(
     X_use = X[use]
     y_use = y[use]
 
-    # OLS initializer
     beta0, *_ = np.linalg.lstsq(X_use, y_use, rcond=None)
     resid = y_use - X_use @ beta0
-    sigma0 = float(np.std(resid, ddof=min(1, len(resid) - 1)))
+
+    if len(resid) >= 2:
+        sigma0 = float(np.std(resid, ddof=1))
+    else:
+        sigma0 = float(np.std(resid))
+
     sigma0 = max(sigma0, 0.25)
 
     return np.concatenate([beta0, np.array([np.log(sigma0)])])
@@ -152,7 +152,7 @@ def fit_treatment_lognormal_aft(
     max_iter, tol
         Optimizer controls.
     optimizer_method
-        Passed to scipy.optimize.minimize. L-BFGS-B is recommended for stability.
+        Passed to scipy.optimize.minimize. L-BFGS-B is recommended.
 
     Returns
     -------
@@ -205,7 +205,6 @@ def fit_treatment_lognormal_aft(
     log_sigma_hat = float(theta_hat[p])
     sigma_hat = float(np.exp(log_sigma_hat))
 
-    # covariance from optimizer inverse Hessian approximation if available
     cov = np.full((len(theta_hat), len(theta_hat)), np.nan, dtype=float)
     hess_inv = getattr(res, "hess_inv", None)
 
