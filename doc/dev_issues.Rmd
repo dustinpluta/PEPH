@@ -1,0 +1,153 @@
+# Survival Model – Outstanding Issues and Future Enhancements
+
+This document records known limitations and potential future improvements to the survival modeling subsystem. None of these items block current analysis workflows, but they should be considered for future development.
+
+---
+
+# 1. Prediction Uncertainty is Partial
+
+Current bootstrap confidence bands propagate uncertainty in:
+
+- fixed-effect coefficients  
+- baseline hazards  
+
+via draws from the estimated covariance matrix of the fitted parameters.
+
+However, the bootstrap does not propagate uncertainty in the spatial frailty surface. Specifically:
+
+Not included in uncertainty propagation:
+
+- Leroux frailty estimates u  
+- spatial parameters rho  
+- spatial precision tau  
+
+The current intervals therefore represent conditional uncertainty given the fitted spatial surface.
+
+Possible future improvements:
+
+- hierarchical bootstrap  
+- Laplace-based uncertainty propagation  
+- Bayesian implementation  
+- approximate posterior sampling of (beta, nu, u, rho, tau)
+
+---
+
+# 2. Counterfactual Prediction API is Script-Based
+
+The package currently provides counterfactual prediction through helper scripts:
+
+- run_ttt_counterfactual_reference.py  
+- run_ttt_delay_contrast_reference.py  
+
+These scripts are useful for analysis but are not yet formalized as a reusable API layer.
+
+Future improvement:
+
+Add high-level functions such as:
+
+predict_counterfactual_survival(...)  
+predict_delay_effect(...)  
+predict_reference_profiles(...)
+
+so downstream analyses can call them programmatically without using scripts.
+
+---
+
+# 3. predict_linear_predictor() is Undefined for TD Models
+
+For models containing time-dependent covariates (x_td_numeric), the function predict_linear_predictor() intentionally raises an error.
+
+Reason:
+
+A single scalar linear predictor is not well-defined when the hazard depends on time-dependent variables.
+
+Instead, users must compute:
+
+predict_cumhaz(...)  
+predict_survival(...)  
+predict_risk(...)
+
+using treatment-time information.
+
+This is a deliberate design choice but may affect utilities that assume scalar risk scores.
+
+---
+
+# 4. Treatment Effect is Currently Constant Over Time
+
+The current survival specification models treatment using a simple step indicator treated_td(t) with coefficient gamma.
+
+Hazard structure:
+
+h(t) = h0(t) * exp(x beta + gamma * treated_td(t))
+
+This assumes:
+
+- a constant multiplicative effect after treatment  
+- no time-since-treatment dynamics  
+
+Possible extensions:
+
+- time-since-treatment effects  
+- piecewise post-treatment effects  
+- spline-based treatment response  
+- interval-specific treatment coefficients  
+
+These may become important if treatment timing is a primary scientific focus.
+
+---
+
+# 5. No Built-in Multi-Profile Reporting Layer
+
+Current reporting tools focus on:
+
+- single reference patient  
+- specific treatment schedules  
+- delay contrasts  
+
+There is not yet a standardized system for:
+
+- population-level summaries  
+- subgroup reporting  
+- multi-profile prediction grids  
+
+Potential future additions:
+
+predict_profile_grid(...)  
+report_subgroup_effects(...)  
+report_policy_scenarios(...)
+
+---
+
+# 6. Spatial Validation Infrastructure Could Be Expanded
+
+Spatial validation currently includes:
+
+- frailty histograms  
+- Moran's I diagnostic  
+- neighbor correlation checks  
+- simulation recovery tests  
+
+These provide strong validation for development.
+
+Future enhancements might include:
+
+- standardized spatial diagnostic reports  
+- automated maps of frailty estimates  
+- simulation stress tests under different spatial regimes  
+- calibration checks by spatial region  
+
+---
+
+# Summary
+
+The survival modeling subsystem is complete for version 1 analysis, but the following improvements remain open:
+
+1. Full uncertainty propagation for spatial frailty models  
+2. Programmatic counterfactual prediction API  
+3. Clarification of linear predictor behavior for time-dependent models  
+4. More flexible treatment-effect structures  
+5. Expanded reporting tools  
+6. Enhanced spatial diagnostics  
+
+These items represent future extensions rather than blockers and can be addressed in later development phases.
