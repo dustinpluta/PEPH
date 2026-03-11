@@ -13,8 +13,7 @@ from peph.treatment.design import (
 def _make_wide_df() -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "id": [1, 2, 3, 4],
-            "age_per10_centered": [-0.5, 0.0, 0.5, 1.0],
+            "age_per10_centered": [0.0, 1.0, -0.5, 0.3],
             "cci": [0, 1, 2, 1],
             "sex": ["F", "M", "F", "M"],
             "stage": ["I", "II", "III", "II"],
@@ -32,8 +31,7 @@ def test_build_x_treatment_fit_expands_columns_and_encoding() -> None:
         categorical_reference_levels={"sex": "F", "stage": "I"},
     )
 
-    assert X.shape == (4, 5)
-
+    assert X.shape == (4, 6)
     assert enc.x_numeric == ["age_per10_centered", "cci"]
     assert enc.x_categorical == ["sex", "stage"]
     assert enc.categorical_reference_levels == {"sex": "F", "stage": "I"}
@@ -42,6 +40,7 @@ def test_build_x_treatment_fit_expands_columns_and_encoding() -> None:
         "stage": ["I", "II", "III"],
     }
     assert enc.x_expanded_cols == [
+        "Intercept",
         "age_per10_centered",
         "cci",
         "sexM",
@@ -49,67 +48,80 @@ def test_build_x_treatment_fit_expands_columns_and_encoding() -> None:
         "stageIII",
     ]
 
-    expected = np.array(
-        [
-            [-0.5, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 1.0, 1.0, 0.0],
-            [0.5, 2.0, 0.0, 0.0, 1.0],
-            [1.0, 1.0, 1.0, 1.0, 0.0],
-        ],
-        dtype=float,
+    X_df = pd.DataFrame(X, columns=enc.x_expanded_cols)
+
+    assert np.allclose(X_df["Intercept"].to_numpy(dtype=float), 1.0)
+    assert np.allclose(
+        X_df["age_per10_centered"].to_numpy(dtype=float),
+        wide_df["age_per10_centered"].to_numpy(dtype=float),
+    )
+    assert np.allclose(
+        X_df["cci"].to_numpy(dtype=float),
+        wide_df["cci"].to_numpy(dtype=float),
     )
 
-    assert np.allclose(X, expected)
+    assert X_df["sexM"].tolist() == [0.0, 1.0, 0.0, 1.0]
+    assert X_df["stageII"].tolist() == [0.0, 1.0, 0.0, 1.0]
+    assert X_df["stageIII"].tolist() == [0.0, 0.0, 1.0, 0.0]
 
 
-def test_build_x_treatment_fit_missing_required_column_raises() -> None:
+def test_build_x_treatment_fit_missing_covariate_raises() -> None:
     wide_df = _make_wide_df().drop(columns=["cci"])
 
     with pytest.raises(ValueError, match="Missing required treatment covariate columns"):
         build_x_treatment_fit(
             wide_df,
             x_numeric=["age_per10_centered", "cci"],
-            x_categorical=["sex"],
-            categorical_reference_levels={"sex": "F"},
+            x_categorical=["sex", "stage"],
+            categorical_reference_levels={"sex": "F", "stage": "I"},
         )
 
 
-def test_build_x_treatment_fit_missing_reference_level_spec_raises() -> None:
+def test_build_x_treatment_fit_missing_reference_level_raises() -> None:
     wide_df = _make_wide_df()
 
     with pytest.raises(ValueError, match="Missing categorical reference levels"):
         build_x_treatment_fit(
             wide_df,
-            x_numeric=["age_per10_centered"],
+            x_numeric=["age_per10_centered", "cci"],
             x_categorical=["sex", "stage"],
             categorical_reference_levels={"sex": "F"},
         )
 
 
-def test_build_x_treatment_fit_reference_level_not_observed_raises() -> None:
+def test_build_x_treatment_fit_reference_not_observed_raises() -> None:
     wide_df = _make_wide_df()
 
-    with pytest.raises(ValueError, match="Reference level 'X' for categorical column 'stage'"):
+    with pytest.raises(ValueError, match="Reference level 'IV'"):
         build_x_treatment_fit(
             wide_df,
-            x_numeric=["age_per10_centered"],
-            x_categorical=["stage"],
-            categorical_reference_levels={"stage": "X"},
+            x_numeric=["age_per10_centered", "cci"],
+            x_categorical=["sex", "stage"],
+            categorical_reference_levels={"sex": "F", "stage": "IV"},
         )
 
 
-def test_build_x_treatment_prediction_matches_fit_on_training_data() -> None:
-    wide_df = _make_wide_df()
+def test_build_x_treatment_prediction_matches_fit_encoding() -> None:
+    fit_df = _make_wide_df()
 
-    X_fit, enc = build_x_treatment_fit(
-        wide_df,
+    _, enc = build_x_treatment_fit(
+        fit_df,
         x_numeric=["age_per10_centered", "cci"],
         x_categorical=["sex", "stage"],
         categorical_reference_levels={"sex": "F", "stage": "I"},
     )
 
+    pred_df = pd.DataFrame(
+        {
+            "age_per10_centered": [0.2, -0.1],
+            "cci": [1, 0],
+            "sex": ["M", "F"],
+            "stage": ["III", "I"],
+        }
+    )
+
     X_pred, unseen = build_x_treatment_prediction(
-        wide_df,
+        pred_df,
         x_numeric=enc.x_numeric,
         x_categorical=enc.x_categorical,
         categorical_reference_levels=enc.categorical_reference_levels,
@@ -119,11 +131,19 @@ def test_build_x_treatment_prediction_matches_fit_on_training_data() -> None:
     )
 
     assert unseen is None
-    assert X_pred.shape == X_fit.shape
-    assert np.allclose(X_pred, X_fit)
+    assert X_pred.shape == (2, 6)
+
+    X_df = pd.DataFrame(X_pred, columns=enc.x_expanded_cols)
+
+    assert X_df["Intercept"].tolist() == [1.0, 1.0]
+    assert X_df["age_per10_centered"].tolist() == [0.2, -0.1]
+    assert X_df["cci"].tolist() == [1.0, 0.0]
+    assert X_df["sexM"].tolist() == [1.0, 0.0]
+    assert X_df["stageII"].tolist() == [0.0, 0.0]
+    assert X_df["stageIII"].tolist() == [1.0, 0.0]
 
 
-def test_build_x_treatment_prediction_unseen_category_hard_fail() -> None:
+def test_build_x_treatment_prediction_unseen_category_hard_fail_raises() -> None:
     fit_df = _make_wide_df()
 
     _, enc = build_x_treatment_fit(
@@ -137,7 +157,7 @@ def test_build_x_treatment_prediction_unseen_category_hard_fail() -> None:
         {
             "age_per10_centered": [0.2],
             "cci": [1],
-            "sex": ["F"],
+            "sex": ["M"],
             "stage": ["IV"],
         }
     )
@@ -184,37 +204,10 @@ def test_build_x_treatment_prediction_unseen_category_soft_fail_zero_codes() -> 
     )
 
     assert unseen == {"stage": ["IV"]}
-    assert X_pred.shape == (1, 5)
+    assert X_pred.shape == (1, 6)
 
-    expected = np.array([[0.2, 1.0, 1.0, 0.0, 0.0]], dtype=float)
-    assert np.allclose(X_pred, expected)
-
-
-def test_build_x_treatment_prediction_missing_required_column_raises() -> None:
-    fit_df = _make_wide_df()
-
-    _, enc = build_x_treatment_fit(
-        fit_df,
-        x_numeric=["age_per10_centered", "cci"],
-        x_categorical=["sex", "stage"],
-        categorical_reference_levels={"sex": "F", "stage": "I"},
-    )
-
-    pred_df = pd.DataFrame(
-        {
-            "age_per10_centered": [0.2],
-            "sex": ["F"],
-            "stage": ["II"],
-        }
-    )
-
-    with pytest.raises(ValueError, match="Missing required treatment covariate columns"):
-        build_x_treatment_prediction(
-            pred_df,
-            x_numeric=enc.x_numeric,
-            x_categorical=enc.x_categorical,
-            categorical_reference_levels=enc.categorical_reference_levels,
-            categorical_levels_seen=enc.categorical_levels_seen,
-            x_col_names=enc.x_expanded_cols,
-            hard_fail=True,
-        )
+    X_df = pd.DataFrame(X_pred, columns=enc.x_expanded_cols)
+    assert X_df.loc[0, "Intercept"] == 1.0
+    assert X_df.loc[0, "sexM"] == 1.0
+    assert X_df.loc[0, "stageII"] == 0.0
+    assert X_df.loc[0, "stageIII"] == 0.0

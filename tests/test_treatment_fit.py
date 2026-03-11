@@ -12,6 +12,7 @@ def _simulate_lognormal_aft_data(
     n: int,
     beta: dict[str, float],
     sigma: float,
+    treatment_intercept: float = float(np.log(120.0)),
     seed: int = 123,
     censor_rate: float | None = None,
 ) -> pd.DataFrame:
@@ -24,7 +25,8 @@ def _simulate_lognormal_aft_data(
     stage = rng.choice(["I", "II", "III"], size=n, p=[0.45, 0.35, 0.20])
 
     mu = (
-        beta["age_per10_centered"] * age
+        float(treatment_intercept)
+        + beta["age_per10_centered"] * age
         + beta["cci"] * cci
         + beta["ses"] * ses
         + beta["sexM"] * (sex == "M").astype(float)
@@ -32,7 +34,7 @@ def _simulate_lognormal_aft_data(
         + beta["stageIII"] * (stage == "III").astype(float)
     )
 
-    log_t = mu + sigma * rng.normal(size=n)
+    log_t = mu + float(sigma) * rng.normal(size=n)
     t_true = np.exp(log_t)
 
     if censor_rate is None:
@@ -43,13 +45,12 @@ def _simulate_lognormal_aft_data(
         t_obs = np.minimum(t_true, c)
         event = (t_true <= c).astype(int)
 
-    # strictly positive times for log-normal AFT
     t_obs = np.maximum(t_obs, 1e-6)
 
     return pd.DataFrame(
         {
             "id": np.arange(1, n + 1),
-            "treatment_time": t_obs,
+            "treatment_time_obs": t_obs,
             "treatment_event": event,
             "age_per10_centered": age,
             "cci": cci,
@@ -74,13 +75,14 @@ def test_fit_treatment_lognormal_aft_smoke() -> None:
         n=400,
         beta=beta_true,
         sigma=0.45,
+        treatment_intercept=float(np.log(120.0)),
         seed=1,
-        censor_rate=0.10,
+        censor_rate=0.01,
     )
 
     fitted = fit_treatment_lognormal_aft(
         df,
-        treatment_time_col="treatment_time",
+        treatment_time_col="treatment_time_obs",
         treatment_event_col="treatment_event",
         x_numeric=["age_per10_centered", "cci", "ses"],
         x_categorical=["sex", "stage"],
@@ -106,18 +108,20 @@ def test_fit_treatment_lognormal_aft_parameter_recovery_no_censoring() -> None:
         "stageIII": 0.50,
     }
     sigma_true = 0.35
+    treatment_intercept_true = float(np.log(120.0))
 
     df = _simulate_lognormal_aft_data(
         n=4000,
         beta=beta_true,
         sigma=sigma_true,
+        treatment_intercept=treatment_intercept_true,
         seed=42,
         censor_rate=None,
     )
 
     fitted = fit_treatment_lognormal_aft(
         df,
-        treatment_time_col="treatment_time",
+        treatment_time_col="treatment_time_obs",
         treatment_event_col="treatment_event",
         x_numeric=["age_per10_centered", "cci", "ses"],
         x_categorical=["sex", "stage"],
@@ -126,7 +130,9 @@ def test_fit_treatment_lognormal_aft_parameter_recovery_no_censoring() -> None:
 
     beta_hat = dict(zip(fitted.x_col_names, fitted.beta))
 
-    # moderate tolerances for stable unit testing
+    assert "Intercept" in beta_hat
+    assert abs(beta_hat["Intercept"] - treatment_intercept_true) < 0.08
+
     assert abs(beta_hat["age_per10_centered"] - beta_true["age_per10_centered"]) < 0.05
     assert abs(beta_hat["cci"] - beta_true["cci"]) < 0.05
     assert abs(beta_hat["ses"] - beta_true["ses"]) < 0.05
@@ -151,17 +157,17 @@ def test_fit_treatment_lognormal_aft_handles_right_censoring() -> None:
         n=1200,
         beta=beta_true,
         sigma=0.50,
+        treatment_intercept=float(np.log(120.0)),
         seed=123,
-        censor_rate=0.15,
+        censor_rate=0.01,
     )
 
-    # ensure some censoring is actually present
     prop_event = float(df["treatment_event"].mean())
     assert 0.2 < prop_event < 0.95
 
     fitted = fit_treatment_lognormal_aft(
         df,
-        treatment_time_col="treatment_time",
+        treatment_time_col="treatment_time_obs",
         treatment_event_col="treatment_event",
         x_numeric=["age_per10_centered", "cci", "ses"],
         x_categorical=["sex", "stage"],
@@ -175,7 +181,7 @@ def test_fit_treatment_lognormal_aft_handles_right_censoring() -> None:
 
     beta_hat = dict(zip(fitted.x_col_names, fitted.beta))
 
-    # basic directional sanity checks under censoring
+    assert "Intercept" in beta_hat
     assert beta_hat["age_per10_centered"] > 0.0
     assert beta_hat["cci"] > 0.0
     assert beta_hat["ses"] < 0.0
