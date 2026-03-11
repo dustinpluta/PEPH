@@ -1,4 +1,6 @@
-## Example Usage
+# Example Usage
+
+## Survival Model
 
 ### Model fitting main runner
 
@@ -12,7 +14,33 @@ python scripts/run_ttt_delay_contrast_reference.py --model .\data\dev\ga_spatial
 
 python scripts/run_ttt_counterfactual_reference.py --model .\data\dev\ga_spatial_ttt_cli\ga_spatial_ttt_cli_2026-03-08_180147\model.json --out-dir data/dev/reference_counterfactual_demo --times 365,730,1825 --treat-at-times 30,60,90,180 --age-per10-centered 0.0 --cci 1 --tumor-size-log 3.5 --ses 0.0 --sex F --stage II --zip 30002 --observed-treatment-time 75 --n-boot 100
 
+### Model Sanity Check
+
+python scripts/run_model_sanity_checks.py --run-dir .\data\dev\ga_spatial_ttt_cli\ga_spatial_ttt_cli_2026-03-08_180147\ --metadata-json .\data\ga_spatial_ttt_metadata.json
+
+### Moran's I Spatial Frailty Check
+
+python scripts/check_morans_i_frailty.py --run-dir .\data\dev\ga_spatial_ttt_cli\ga_spatial_ttt_cli_2026-03-08_174700\ --zips data/zips.csv --edges data/zip_adjacency.csv
+
+## Treatment Model
+
+### Running the treatment fit
+
+python scripts/run_treatment_fit.py --data data/joint_ttt_survival_dataset.csv --out-dir models/treatment_fit --time-col treatment_time_obs --event-col treatment_event --x-numeric age_per10_centered,cci,ses --x-categorical sex,stage --reference-levels sex=F,stage=I --write-reference-predictions
+
+## Utilities
+
 ### Generate TTT seerlike data for GA zips
-#### Resulting data set can be used for both survival and treatment models
+###### Resulting data set can be used for both survival and treatment models
 
 python scripts/generate_joint_ttt_survival_dataset.py
+
+### Write long form data from a base csv
+
+python scripts/write_long_from_wide.py --wide-csv data/joint_ttt_survival_dataset.csv --out-csv data/joint_ttt_survival_long.csv --breaks 0 30 90 180 365 730 1825
+
+### Inspect long event structure
+
+python scripts/check_long_event_structure.py --long-csv .\data\joint_ttt_survival_long.csv
+
+
