@@ -28,7 +28,6 @@ def main() -> None:
         print(out_dir)
         return
 
-    # report subcommands
     if hasattr(args, "func"):
         args.func(args)
         return

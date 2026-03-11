@@ -10,7 +10,7 @@ import yaml
 
 from peph.model.fit_dispatch import fit_model_dispatch
 from peph.model.inference import baseline_table, coef_table, inference_summary
-from peph.config.schema import RunConfig
+from peph.config.schema import RunConfig, TreatmentConfig
 from peph.data.io import read_table, write_table
 from peph.data.long import expand_long
 from peph.data.split import apply_split, train_test_split_subject
@@ -25,7 +25,20 @@ from peph.model.predict import (
 )
 from peph.plots.calibration import plot_calibration_risk_by_quantile
 from peph.plots.diagnostics import plot_cox_snell
+from peph.report.ttt import (
+    summarize_treated_td_effect,
+    summarize_treatment_long,
+    summarize_treatment_wide,
+    summarize_treatment_time_distribution,
+    plot_treatment_time_histogram,
+)
 from peph.spatial.graph import build_graph_from_edge_list
+from peph.treatment.fit import fit_treatment_lognormal_aft
+from peph.treatment.report import (
+    summarize_treatment_coefficients as summarize_treatment_model_coefficients,
+    summarize_treatment_model,
+    summarize_treatment_reference_predictions,
+)
 from peph.utils.json import write_json
 
 
@@ -33,6 +46,52 @@ def _write_yaml(path: Path, obj: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(obj, f, sort_keys=False)
+
+
+def _run_treatment_fit(
+    *,
+    train_wide: pd.DataFrame,
+    cfg: TreatmentConfig,
+    out_dir: Path,
+) -> None:
+    """
+    Fit the treatment-time AFT model and write artifacts under out_dir.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    fitted = fit_treatment_lognormal_aft(
+        train_wide,
+        treatment_time_col=cfg.time_col,
+        treatment_event_col=cfg.event_col,
+        x_numeric=cfg.x_numeric,
+        x_categorical=cfg.x_categorical,
+        categorical_reference_levels=cfg.categorical_reference_levels,
+        max_iter=cfg.max_iter,
+        tol=cfg.tol,
+        optimizer_method=cfg.optimizer_method,
+    )
+
+    fitted.save(out_dir / "treatment_model.json")
+
+    coef_df = summarize_treatment_model_coefficients(fitted)
+    write_table(coef_df, out_dir / "treatment_coefficients.parquet")
+    coef_df.to_csv(out_dir / "treatment_coefficients.csv", index=False)
+
+    summary = summarize_treatment_model(fitted)
+    write_json(out_dir / "treatment_summary.json", summary)
+
+    if cfg.write_reference_predictions:
+        n_ref = min(int(cfg.reference_n), len(train_wide))
+        ref_df = train_wide.iloc[:n_ref].copy()
+        ref_out = summarize_treatment_reference_predictions(
+            ref_df,
+            fitted,
+            horizons=cfg.reference_horizons,
+            quantiles=cfg.reference_quantiles,
+            hard_fail=True,
+        )
+        write_table(ref_out, out_dir / "treatment_reference_predictions.parquet")
+        ref_out.to_csv(out_dir / "treatment_reference_predictions.csv", index=False)
 
 
 # =========================
@@ -124,7 +183,7 @@ def _morans_I(x: np.ndarray, W_csr: Any) -> Dict[str, float]:
 
     W_csr: symmetric sparse adjacency with zero diagonal.
     """
-    import scipy.sparse as sp  # local import
+    import scipy.sparse as sp  # noqa: F401
 
     x = np.asarray(x, dtype=float).ravel()
     n = x.size
@@ -148,7 +207,6 @@ def _morans_I(x: np.ndarray, W_csr: Any) -> Dict[str, float]:
     if n <= 3:
         return {"I": float(I), "expected": float(EI), "variance": float("nan"), "z": float("nan")}
 
-    # Cliff-Ord style variance under randomization (best-effort)
     W_plus = W + W.T
     S1 = 0.5 * float((W_plus.multiply(W_plus)).sum())
     rs = np.asarray(W.sum(axis=1)).ravel()
@@ -161,8 +219,8 @@ def _morans_I(x: np.ndarray, W_csr: Any) -> Dict[str, float]:
     b2 = float(n * np.sum(x4) / (s2**2)) if s2 > 0 else 0.0
 
     num_var = (
-        n * ((n**2 - 3*n + 3) * S1 - n * S2 + 3 * (S0**2))
-        - b2 * ((n**2 - n) * S1 - 2*n * S2 + 6 * (S0**2))
+        n * ((n**2 - 3 * n + 3) * S1 - n * S2 + 3 * (S0**2))
+        - b2 * ((n**2 - n) * S1 - 2 * n * S2 + 6 * (S0**2))
     )
     den_var = (n - 1) * (n - 2) * (n - 3) * (S0**2)
     varI = float(num_var / den_var) - EI**2
@@ -172,7 +230,7 @@ def _morans_I(x: np.ndarray, W_csr: Any) -> Dict[str, float]:
 
 
 def _plot_frailty_caterpillar(frailty_df: pd.DataFrame, out_path: Path, top_k: int = 30) -> None:
-    import matplotlib.pyplot as plt  # local import
+    import matplotlib.pyplot as plt
 
     df = frailty_df[["zip", "u_hat"]].copy().sort_values("u_hat")
     low = df.head(top_k)
@@ -199,7 +257,7 @@ def _plot_frailty_caterpillar(frailty_df: pd.DataFrame, out_path: Path, top_k: i
 
 
 def _plot_morans_scatter(x_centered: np.ndarray, spatial_lag: np.ndarray, out_path: Path, title: str) -> None:
-    import matplotlib.pyplot as plt  # local import
+    import matplotlib.pyplot as plt
 
     x_centered = np.asarray(x_centered, dtype=float).ravel()
     spatial_lag = np.asarray(spatial_lag, dtype=float).ravel()
@@ -219,7 +277,7 @@ def _plot_morans_scatter(x_centered: np.ndarray, spatial_lag: np.ndarray, out_pa
 
 
 def _plot_calibration_by_bin(cal_df: pd.DataFrame, out_path: Path, title: str) -> None:
-    import matplotlib.pyplot as plt  # local import
+    import matplotlib.pyplot as plt
 
     df = cal_df.sort_values("bin").copy()
     x = df["mean_pred"].to_numpy(dtype=float)
@@ -248,7 +306,6 @@ def _load_zip_universe(zips_path: str) -> List[str]:
     zdf = pd.read_csv(zips_path)
     if "zip" in zdf.columns:
         return zdf["zip"].astype(str).tolist()
-    # allow single-column CSV
     if zdf.shape[1] == 1:
         return zdf.iloc[:, 0].astype(str).tolist()
     raise ValueError(f"ZIP universe file must contain a 'zip' column or be single-column: {zips_path}")
@@ -264,16 +321,44 @@ def run_pipeline(cfg: RunConfig) -> Path:
     # Read wide data
     wide = read_table(cfg.data.path, cfg.data.format)
 
-    # Validate columns exist
+    # ---------------------------------
+    # Resolve TTT / TD-covariate config
+    # ---------------------------------
+    x_td_numeric = list(getattr(cfg.data_schema, "x_td_numeric", []) or [])
+
+    ttt_enabled = bool(getattr(cfg, "ttt", None) is not None and getattr(cfg.ttt, "enabled", False))
+    cut_times_col: Optional[str] = None
+    td_treatment_col: Optional[str] = None
+    treated_td_col: Optional[str] = None
+
+    if ttt_enabled:
+        cut_times_col = str(cfg.ttt.treatment_time_col)
+        td_treatment_col = str(cfg.ttt.treatment_time_col)
+        treated_td_col = str(cfg.ttt.treated_td_col)
+
+        if treated_td_col not in x_td_numeric:
+            raise ValueError(
+                "TTT is enabled but data_schema.x_td_numeric does not include "
+                f"treated_td_col='{treated_td_col}'."
+            )
+
+    # Validate columns exist in WIDE data
     required = (
         [cfg.data_schema.id_col, cfg.data_schema.time_col, cfg.data_schema.event_col]
         + cfg.data_schema.x_numeric
         + cfg.data_schema.x_categorical
     )
 
-    # If spatial is enabled, area_col must exist in WIDE and must be carried to LONG.
+    if cut_times_col is not None:
+        required.append(cut_times_col)
+
     if cfg.spatial is not None:
         required.append(cfg.spatial.area_col)
+
+    if cfg.treatment is not None and cfg.treatment.enabled:
+        required.extend([cfg.treatment.time_col, cfg.treatment.event_col])
+        required.extend(cfg.treatment.x_numeric)
+        required.extend(cfg.treatment.x_categorical)
 
     missing = [c for c in required if c not in wide.columns]
     if missing:
@@ -293,14 +378,22 @@ def run_pipeline(cfg: RunConfig) -> Path:
         {"train_ids": split.train_ids.tolist(), "test_ids": split.test_ids.tolist()},
     )
 
-    # Write wide splits (helpful for debugging)
     write_table(train_wide, out_dir / "train_wide.parquet")
     write_table(test_wide, out_dir / "test_wide.parquet")
+
+    # ---------------------------------
+    # Optional treatment-model fit
+    # ---------------------------------
+    if cfg.treatment is not None and cfg.treatment.enabled:
+        _run_treatment_fit(
+            train_wide=train_wide,
+            cfg=cfg.treatment,
+            out_dir=out_dir / "treatment",
+        )
 
     # Expand to long
     x_cols_all = cfg.data_schema.x_numeric + cfg.data_schema.x_categorical
     if cfg.spatial is not None:
-        # critical for Leroux: area_col must be present in long rows
         x_cols_all = x_cols_all + [cfg.spatial.area_col]
 
     long_train = expand_long(
@@ -310,6 +403,9 @@ def run_pipeline(cfg: RunConfig) -> Path:
         event_col=cfg.data_schema.event_col,
         x_cols=x_cols_all,
         breaks=cfg.time.breaks,
+        cut_times_col=cut_times_col,
+        td_treatment_col=td_treatment_col,
+        treated_td_col=(treated_td_col if treated_td_col is not None else "treated_td"),
     )
     long_test = expand_long(
         test_wide,
@@ -318,18 +414,22 @@ def run_pipeline(cfg: RunConfig) -> Path:
         event_col=cfg.data_schema.event_col,
         x_cols=x_cols_all,
         breaks=cfg.time.breaks,
+        cut_times_col=cut_times_col,
+        td_treatment_col=td_treatment_col,
+        treated_td_col=(treated_td_col if treated_td_col is not None else "treated_td"),
     )
 
     write_table(long_train, out_dir / "long_train.parquet")
     write_table(long_test, out_dir / "long_test.parquet")
 
-    # Fit
+    # Fit survival model
     fitted = fit_model_dispatch(
         backend=cfg.fit.backend,
         long_train=long_train,
         train_wide=train_wide,
         breaks=cfg.time.breaks,
         x_numeric=cfg.data_schema.x_numeric,
+        x_td_numeric=x_td_numeric,
         x_categorical=cfg.data_schema.x_categorical,
         categorical_reference_levels=cfg.data_schema.categorical_reference_levels,
         n_train_subjects=int(train_wide[cfg.data_schema.id_col].nunique()),
@@ -350,7 +450,6 @@ def run_pipeline(cfg: RunConfig) -> Path:
     )
     fitted.save(str(out_dir / "model.json"))
 
-    # Inference artifacts
     coef_df = coef_table(fitted)
     base_df = baseline_table(fitted)
 
@@ -364,35 +463,97 @@ def run_pipeline(cfg: RunConfig) -> Path:
     )
     write_json(out_dir / "inference.json", inf)
 
-    # Predict on test
+    # TTT reporting artifacts (train set)
+    if ttt_enabled and treated_td_col is not None:
+        if treated_td_col not in long_train.columns:
+            raise RuntimeError(
+                f"TTT is enabled but treated_td_col='{treated_td_col}' was not found in long_train."
+            )
+
+        stage_col = "stage" if "stage" in train_wide.columns else None
+
+        ttt_wide = summarize_treatment_wide(
+            train_wide,
+            treatment_time_col=cut_times_col,
+            stage_col=stage_col,
+        )
+
+        ttt_time_dist = summarize_treatment_time_distribution(
+            train_wide,
+            treatment_time_col=cut_times_col,
+        )
+
+        plot_treatment_time_histogram(
+            train_wide,
+            treatment_time_col=cut_times_col,
+            out_path=out_dir / "plots" / "treatment_time_histogram.png",
+        )
+
+        ttt_long = summarize_treatment_long(
+            long_train,
+            treated_td_col=treated_td_col,
+            exposure_col="exposure",
+            event_col="event",
+            stage_col=stage_col,
+        )
+
+        ttt_effect = summarize_treated_td_effect(
+            fitted,
+            treated_td_col=treated_td_col,
+            alpha=0.05,
+        )
+
+        ttt_summary = {
+            "treatment_process": ttt_wide,
+            "treatment_time_distribution": ttt_time_dist.to_dict(orient="records"),
+            "long_risk_time": ttt_long,
+            "treatment_effect": ttt_effect,
+        }
+        write_json(out_dir / "ttt_summary.json", ttt_summary)
+
+        write_table(ttt_time_dist, out_dir / "treatment_time_distribution.parquet")
+
+        if "by_stage" in ttt_wide:
+            write_table(pd.DataFrame(ttt_wide["by_stage"]), out_dir / "ttt_wide_by_stage.parquet")
+
+        if "by_stage" in ttt_long:
+            write_table(pd.DataFrame(ttt_long["by_stage"]), out_dir / "ttt_long_by_stage.parquet")
+
     horizons = list(map(float, cfg.predict.horizons_days or []))
 
-    # Frailty-aware predictions:
-    # - "auto": Leroux -> conditional, PH -> none
-    frailty_mode = getattr(cfg.predict, "frailty_mode", "auto")
+    if x_td_numeric and not horizons:
+        return out_dir
 
-    eta = predict_linear_predictor(
-        test_wide,
-        fitted,
-        frailty_mode=frailty_mode,
-        hard_fail=True,
-        allow_unseen_area=(cfg.spatial.allow_unseen_area if cfg.spatial else False),
-    )
+    frailty_mode = getattr(cfg.predict, "frailty_mode", "auto")
+    treatment_time_col_for_prediction = cut_times_col if ttt_enabled else None
+
+    eta = None
+    if not x_td_numeric:
+        eta = predict_linear_predictor(
+            test_wide,
+            fitted,
+            frailty_mode=frailty_mode,
+            hard_fail=True,
+            allow_unseen_area=(cfg.spatial.allow_unseen_area if cfg.spatial else False),
+        )
 
     pred_df = pd.DataFrame(
         {
             cfg.data_schema.id_col: test_wide[cfg.data_schema.id_col].to_numpy(),
             cfg.data_schema.time_col: test_wide[cfg.data_schema.time_col].to_numpy(dtype=float),
             cfg.data_schema.event_col: test_wide[cfg.data_schema.event_col].to_numpy(dtype=int),
-            "eta": eta.astype(float),
         }
     )
+
+    if eta is not None:
+        pred_df["eta"] = eta.astype(float)
 
     if horizons:
         S = predict_survival(
             test_wide,
             fitted,
             times=horizons,
+            treatment_time_col=treatment_time_col_for_prediction,
             frailty_mode=frailty_mode,
             hard_fail=True,
             allow_unseen_area=(cfg.spatial.allow_unseen_area if cfg.spatial else False),
@@ -401,6 +562,7 @@ def run_pipeline(cfg: RunConfig) -> Path:
             test_wide,
             fitted,
             times=horizons,
+            treatment_time_col=treatment_time_col_for_prediction,
             frailty_mode=frailty_mode,
             hard_fail=True,
             allow_unseen_area=(cfg.spatial.allow_unseen_area if cfg.spatial else False),
@@ -409,6 +571,7 @@ def run_pipeline(cfg: RunConfig) -> Path:
             test_wide,
             fitted,
             times=horizons,
+            treatment_time_col=treatment_time_col_for_prediction,
             frailty_mode=frailty_mode,
             hard_fail=True,
             allow_unseen_area=(cfg.spatial.allow_unseen_area if cfg.spatial else False),
@@ -428,15 +591,15 @@ def run_pipeline(cfg: RunConfig) -> Path:
     metrics: Dict[str, Any] = {}
     time = pred_df[cfg.data_schema.time_col].to_numpy(dtype=float)
     event = pred_df[cfg.data_schema.event_col].to_numpy(dtype=int)
-    score = pred_df["eta"].to_numpy(dtype=float)
 
-    if cfg.metrics.discrimination.get("c_index", True):
+    score = pred_df["eta"].to_numpy(dtype=float) if "eta" in pred_df.columns else None
+
+    if score is not None and cfg.metrics.discrimination.get("c_index", True):
         metrics["c_index"] = c_index_harrell(time, event, score)
 
-    if cfg.metrics.discrimination.get("time_dependent_auc", True) and horizons:
+    if score is not None and cfg.metrics.discrimination.get("time_dependent_auc", True) and horizons:
         metrics.update(time_dependent_auc_ipcw(time, event, score, horizons))
 
-    # Calibration + Brier by horizon (requires predicted risk columns)
     if horizons:
         for tau in horizons:
             rc = f"risk_t{int(tau)}"
@@ -465,7 +628,6 @@ def run_pipeline(cfg: RunConfig) -> Path:
                 )
                 metrics.update(cal)
 
-    # Cox–Snell residuals (test)
     resid_df: Optional[pd.DataFrame] = None
     if cfg.metrics.residuals.get("cox_snell", True):
         r = cox_snell_residuals(fitted, test_wide, time_col=cfg.data_schema.time_col)
@@ -480,15 +642,12 @@ def run_pipeline(cfg: RunConfig) -> Path:
         )
         write_table(resid_df, out_dir / "cox_snell_residuals.parquet")
 
-    # =========================
     # PR9: Spatial frailty diagnostics + grouped calibration
-    # =========================
     sp = _extract_spatial(fitted)
     if sp is not None:
         if cfg.spatial is None:
             raise RuntimeError("Fitted model includes spatial frailty but cfg.spatial is None")
 
-        # Build graph from config files (authoritative)
         zips_universe = _load_zip_universe(cfg.spatial.zips_path)
         edges_df = pd.read_csv(cfg.spatial.edges_path)
         graph = build_graph_from_edge_list(
@@ -498,7 +657,6 @@ def run_pipeline(cfg: RunConfig) -> Path:
             col_v=cfg.spatial.edges_v_col,
         )
 
-        # Align u to graph ordering using fitted.spatial["zips"]
         u_hat = np.asarray(sp["u"], dtype=float).ravel()
         z_u = [str(z) for z in sp["zips"]]
         if len(z_u) != u_hat.size:
@@ -517,7 +675,6 @@ def run_pipeline(cfg: RunConfig) -> Path:
         tau_hat = float(sp["tau"])
         area_col = str(sp["area_col"])
 
-        # Frailty outputs
         n_train_map = _n_train_by_area(train_wide, area_col=area_col)
         components = np.asarray(graph.component_ids(), dtype=int)
         zips_graph = [str(z) for z in graph.zips]
@@ -534,7 +691,6 @@ def run_pipeline(cfg: RunConfig) -> Path:
         write_table(frailty_df, out_dir / "frailty_table.parquet")
         write_json(out_dir / "frailty_summary.json", frailty_summary)
 
-        # Moran's I on u (graph-aligned)
         W = graph.W()
         mi_u = _morans_I(u_graph, W)
         write_json(out_dir / "spatial_autocorr.json", {"morans_I_u": mi_u})
@@ -547,7 +703,6 @@ def run_pipeline(cfg: RunConfig) -> Path:
         plots_dir = out_dir / "plots"
         plots_dir.mkdir(parents=True, exist_ok=True)
 
-        # Moran scatterplot: row-normalized spatial lag of centered u
         rs = np.asarray(W.sum(axis=1)).ravel().astype(float)
         rs[rs == 0.0] = 1.0
         uc = u_graph - float(np.mean(u_graph))
@@ -556,7 +711,6 @@ def run_pipeline(cfg: RunConfig) -> Path:
 
         _plot_frailty_caterpillar(frailty_df, plots_dir / "frailty_caterpillar.png", top_k=30)
 
-        # Calibration by frailty decile (known-status subset at each horizon)
         if horizons:
             tables_dir = out_dir / "tables"
             tables_dir.mkdir(parents=True, exist_ok=True)
@@ -621,10 +775,8 @@ def run_pipeline(cfg: RunConfig) -> Path:
                     title=f"Calibration by frailty decile (t={it} days)",
                 )
 
-    # Write metrics after spatial additions
     write_json(out_dir / "metrics.json", metrics)
 
-    # Plots (existing)
     plots_dir = out_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
