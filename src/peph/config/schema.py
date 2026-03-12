@@ -1,4 +1,3 @@
-# src/peph/config/schema.py
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,30 +8,71 @@ from pydantic import BaseModel
 
 
 class SchemaConfig(BaseModel):
-    """
-    Canonical column names + explicit X matrix columns.
-    """
     id_col: str
     time_col: str
     event_col: str
 
     x_numeric: List[str]
     x_categorical: List[str]
+    x_td_numeric: List[str] = []
 
     categorical_reference_levels: Dict[str, str]
 
 
 class TimeConfig(BaseModel):
-    """
-    Time scale: days. Breaks define [a,b) intervals.
-    """
     breaks: List[float]
 
 
+class TTTConfig(BaseModel):
+    enabled: bool = False
+    treatment_time_col: str = "treatment_time"
+    treated_td_col: str = "treated_td"
+
+
+class TreatmentSpatialConfig(BaseModel):
+    """
+    Optional spatial configuration for the treatment-time model.
+    """
+
+    enabled: bool = False
+    area_col: str = "zip"
+
+    zips_path: str
+    edges_path: str
+
+    edges_u_col: str = "zip_u"
+    edges_v_col: str = "zip_v"
+
+    allow_unseen_area: bool = False
+
+
+class TreatmentConfig(BaseModel):
+    """
+    Optional treatment-time model configuration.
+    """
+
+    enabled: bool = False
+
+    time_col: str = "treatment_time_obs"
+    event_col: str = "treatment_event"
+
+    x_numeric: List[str] = []
+    x_categorical: List[str] = []
+    categorical_reference_levels: Dict[str, str] = {}
+
+    max_iter: int = 500
+    tol: float = 1e-8
+    optimizer_method: str = "L-BFGS-B"
+
+    write_reference_predictions: bool = False
+    reference_n: int = 5
+    reference_horizons: List[float] = [30.0, 60.0, 90.0, 180.0]
+    reference_quantiles: List[float] = [0.25, 0.75]
+
+    spatial: Optional[TreatmentSpatialConfig] = None
+
+
 class SpatialConfig(BaseModel):
-    """
-    Spatial frailty configuration (ZIP-level).
-    """
     area_col: str = "zip"
 
     zips_path: str
@@ -52,7 +92,6 @@ class FitConfig(BaseModel):
 
     covariance: Literal["classical", "cluster_id"] = "classical"
 
-    # Leroux MAP controls (only used if backend == map_leroux)
     leroux_max_iter: int = 200
     leroux_ftol: float = 1e-7
     rho_clip: float = 1e-6
@@ -98,20 +137,18 @@ class DataConfig(BaseModel):
 
 
 class RunConfig(BaseModel):
-    """
-    Top-level run config used by the pipeline.
-    """
     run_name: str = "run"
 
     data: DataConfig
     output: OutputConfig = OutputConfig()
 
-    # RENAMED: schema -> data_schema to avoid pydantic BaseModel.schema shadowing warning
     data_schema: SchemaConfig
 
     time: TimeConfig
     fit: FitConfig
 
+    ttt: Optional[TTTConfig] = None
+    treatment: Optional[TreatmentConfig] = None
     spatial: Optional[SpatialConfig] = None
 
     split: SplitConfig = SplitConfig()
@@ -121,9 +158,6 @@ class RunConfig(BaseModel):
 
 
 def _apply_overrides(cfg: Dict[str, Any], overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Shallow merge overrides into cfg.
-    """
     if not overrides:
         return cfg
     out = dict(cfg)

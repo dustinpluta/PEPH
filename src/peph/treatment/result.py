@@ -10,19 +10,6 @@ from typing import Any, Optional
 class TreatmentFeatureEncoding:
     """
     Encoding metadata for the treatment-time model design matrix.
-
-    Fields
-    ------
-    x_numeric
-        Numeric covariates included as-is.
-    x_categorical
-        Categorical covariates expanded to dummy columns.
-    categorical_reference_levels
-        Mapping from categorical column name to chosen reference level.
-    categorical_levels_seen
-        Levels observed during fitting, in deterministic order.
-    x_expanded_cols
-        Final expanded fixed-effect column names used in fitting/prediction.
     """
 
     x_numeric: list[str]
@@ -48,6 +35,46 @@ class TreatmentFeatureEncoding:
 
 
 @dataclass
+class TreatmentSpatialFit:
+    """
+    Optional spatial fit information for the treatment-time model.
+
+    Fields mirror the survival-side Leroux object where possible.
+    """
+
+    type: str
+    area_col: str
+    zips: list[str]
+    u: list[float]
+    tau: float
+    rho: float
+    optimizer: Optional[dict[str, Any]] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": str(self.type),
+            "area_col": str(self.area_col),
+            "zips": list(self.zips),
+            "u": [float(x) for x in self.u],
+            "tau": float(self.tau),
+            "rho": float(self.rho),
+            "optimizer": None if self.optimizer is None else dict(self.optimizer),
+        }
+
+    @classmethod
+    def from_dict(cls, obj: dict[str, Any]) -> "TreatmentSpatialFit":
+        return cls(
+            type=str(obj["type"]),
+            area_col=str(obj["area_col"]),
+            zips=[str(x) for x in obj["zips"]],
+            u=[float(x) for x in obj["u"]],
+            tau=float(obj["tau"]),
+            rho=float(obj["rho"]),
+            optimizer=None if obj.get("optimizer") is None else dict(obj["optimizer"]),
+        )
+
+
+@dataclass
 class FittedTreatmentAFTModel:
     """
     Fitted log-normal AFT treatment-time model.
@@ -56,34 +83,8 @@ class FittedTreatmentAFTModel:
     -----
     log(T_i) = x_i' beta + sigma * eps_i,   eps_i ~ N(0, 1)
 
-    Parameters
-    ----------
-    encoding
-        Design-matrix encoding metadata.
-    x_col_names
-        Expanded fixed-effect column names.
-    param_names
-        Full parameter names, typically x_col_names plus 'log_sigma'.
-    params
-        Full fitted parameter vector in the same order as param_names.
-    cov
-        Estimated covariance matrix for params.
-    beta
-        Fixed-effect coefficients corresponding to x_col_names.
-    log_sigma
-        Log residual scale parameter.
-    sigma
-        Residual scale parameter on log-time scale.
-    fit_backend
-        Fitting backend identifier, e.g. 'lognormal_aft_mle'.
-    n_train_subjects
-        Number of wide-format subjects used in fitting.
-    converged
-        Whether the optimizer reported convergence.
-    loglik
-        Maximized log-likelihood.
-    aic
-        Akaike information criterion, if available.
+    Optional spatial extension:
+    log(T_i) = x_i' beta + u_zip(i) + sigma * eps_i
     """
 
     encoding: TreatmentFeatureEncoding
@@ -100,14 +101,17 @@ class FittedTreatmentAFTModel:
     loglik: Optional[float] = None
     aic: Optional[float] = None
 
+    # Optional spatial fit metadata
+    spatial: Optional[TreatmentSpatialFit] = None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "encoding": self.encoding.to_dict(),
             "x_col_names": list(self.x_col_names),
             "param_names": list(self.param_names),
-            "params": list(self.params),
-            "cov": [list(row) for row in self.cov],
-            "beta": list(self.beta),
+            "params": [float(x) for x in self.params],
+            "cov": [[float(x) for x in row] for row in self.cov],
+            "beta": [float(x) for x in self.beta],
             "log_sigma": float(self.log_sigma),
             "sigma": float(self.sigma),
             "fit_backend": str(self.fit_backend),
@@ -115,6 +119,7 @@ class FittedTreatmentAFTModel:
             "converged": bool(self.converged),
             "loglik": None if self.loglik is None else float(self.loglik),
             "aic": None if self.aic is None else float(self.aic),
+            "spatial": None if self.spatial is None else self.spatial.to_dict(),
         }
 
     @classmethod
@@ -133,6 +138,11 @@ class FittedTreatmentAFTModel:
             converged=bool(obj["converged"]),
             loglik=None if obj.get("loglik") is None else float(obj["loglik"]),
             aic=None if obj.get("aic") is None else float(obj["aic"]),
+            spatial=(
+                None
+                if obj.get("spatial") is None
+                else TreatmentSpatialFit.from_dict(obj["spatial"])
+            ),
         )
 
     def save(self, path: str | Path) -> None:
